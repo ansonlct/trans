@@ -1,0 +1,53 @@
+name: Update daily transport static data
+
+on:
+  workflow_dispatch:
+
+  schedule:
+    # 21:30 UTC = 05:30 Hong Kong time (UTC+8), every day.
+    - cron: '30 21 * * *'
+
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/update-transport-data.yml'
+      - 'scripts/update-transport-data.mjs'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-transport-static-data
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Download daily static transport datasets
+        run: node scripts/update-transport-data.mjs
+
+      - name: Commit updated data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add data/
+
+          if git diff --cached --quiet; then
+            echo "No static transport data changes."
+            exit 0
+          fi
+
+          git commit -m "chore: update daily transport static data"
+          git push
