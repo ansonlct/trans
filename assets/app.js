@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '6.0.0';
+const APP_VERSION = '6.1.0';
 
 function renderAppVersion() {
     const el = document.getElementById('app-version-value');
@@ -2864,7 +2864,7 @@ function openSettings() {
 
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
         window.addEventListener('load', () => {
-            navigator.serviceWorker.register('./sw.js').catch(err => {
+            navigator.serviceWorker.register('./sw.js?v=6.1.0', { updateViaCache: 'none' }).catch(err => {
                 console.warn('Service worker registration failed:', err);
             });
         });

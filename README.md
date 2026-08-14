@@ -1,3 +1,5 @@
+# Transport App v6.1.0
+
 # 白石角出行 v6.0.0 — GitHub Pages + 九巴 / 城巴 / 專線小巴每日靜態快取
 
 純 GitHub Pages 版本，不需要 Node.js 後端。
@@ -102,3 +104,11 @@ transport-app/
 ## v6.0.0 版本顯示
 
 設定頁新增「版本」一列，顯示目前前端版本號 `v6.0.0`。每次部署新版時更新 `APP_VERSION` 及 Service Worker cache name，可用來確認 GitHub Pages 是否已載入最新版本。
+
+
+## v6.1.0
+- Settings shows KMB / Citybus / GMB cache status indicators.
+- Settings shows app version v6.1.0.
+- Versioned CSS/JS URLs prevent stale browser assets.
+- Service Worker uses network-first for app shell/navigation.
+- GitHub Action rebases onto latest main before pushing daily data.
