@@ -56,8 +56,6 @@ jobs:
 
           git commit -m "chore: update daily transport static data"
 
-          # main may have changed while this workflow was downloading data.
-          # Rebase our generated-data commit onto the newest remote main first.
           git fetch origin main
           git rebase origin/main
 
