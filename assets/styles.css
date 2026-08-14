@@ -50,3 +50,11 @@ body.dark-mode .cache-status-dot.partial{background:#FFD60A;}
 .version-row{cursor:default;}
 .version-row:active{background:transparent;}
 .version-value{color:var(--text-sub);font-size:.88rem;font-weight:650;font-variant-numeric:tabular-nums;letter-spacing:.2px;}
+
+
+/* v6.2: smoother dialogs, route list containment and keyboard focus */
+.modal{max-height:calc(100dvh - 40px);overflow-y:auto;overscroll-behavior:contain;}
+.route-list-row{content-visibility:auto;contain-intrinsic-size:58px;contain:layout paint style;}
+button:focus-visible,.dir-opt:focus-visible,.route-dir-block:focus-visible,.tab-item:focus-visible,.station-select:focus-visible,.search-input-field:focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 45%,transparent);outline-offset:2px;}
+@supports not (color:color-mix(in srgb,#000 50%,#fff)){button:focus-visible,.station-select:focus-visible,.search-input-field:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}}
+@media (prefers-reduced-motion:reduce){html:focus-within{scroll-behavior:auto}.route-list-row,.route-dir-block,.card-content,.modal,.modal-overlay{transition:none!important}.progress-bar,.skeleton-block{animation:none!important}}

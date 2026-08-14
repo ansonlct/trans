@@ -1,11 +1,12 @@
-const CACHE_NAME = 'psk-transport-pages-shell-v6.1.0';
+const APP_CACHE = 'psk-transport-app-v6.2.0';
+const DATA_CACHE = 'psk-transport-data-v6.2.0';
 
 const APP_SHELL = [
   './',
   './index.html',
-  './assets/styles.css?v=6.1.0',
-  './assets/app.js?v=6.1.0',
-  './manifest.webmanifest?v=6.1.0'
+  './assets/styles.css?v=6.2.0',
+  './assets/app.js?v=6.2.0',
+  './manifest.webmanifest?v=6.2.0'
 ];
 
 const LIVE_API_HOSTS = new Set([
@@ -18,17 +19,17 @@ const LIVE_API_HOSTS = new Set([
 ]);
 
 self.addEventListener('install', event => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => cache.addAll(APP_SHELL))
-  );
+  event.waitUntil(caches.open(APP_CACHE).then(cache => cache.addAll(APP_SHELL)));
   self.skipWaiting();
 });
 
 self.addEventListener('activate', event => {
   event.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.filter(key => key !== CACHE_NAME).map(key => caches.delete(key)))
-    )
+    caches.keys().then(keys => Promise.all(
+      keys
+        .filter(key => key.startsWith('psk-transport-') && ![APP_CACHE, DATA_CACHE].includes(key))
+        .map(key => caches.delete(key))
+    ))
   );
   self.clients.claim();
 });
@@ -37,16 +38,37 @@ async function networkFirst(request, fallbackRequest = request) {
   try {
     const response = await fetch(request, { cache: 'no-store' });
     if (response && response.status === 200 && response.type !== 'opaque') {
-      const clone = response.clone();
-      const cache = await caches.open(CACHE_NAME);
-      await cache.put(request, clone);
+      const cache = await caches.open(APP_CACHE);
+      await cache.put(request, response.clone());
     }
     return response;
   } catch (error) {
-    return (await caches.match(request)) ||
-           (await caches.match(fallbackRequest)) ||
-           Response.error();
+    return (await caches.match(request)) || (await caches.match(fallbackRequest)) || Response.error();
   }
+}
+
+async function cacheDailyStatic(request) {
+  const cache = await caches.open(DATA_CACHE);
+  const cached = await cache.match(request);
+  if (cached) return cached;
+
+  const response = await fetch(request);
+  if (!response || response.status !== 200) return response;
+
+  await cache.put(request, response.clone());
+
+  // Each daily JSON URL contains ?day=YYYY-MM-DD. Keep only the newest entry for
+  // the same dataset so months of old service-day files do not accumulate.
+  const currentUrl = new URL(request.url);
+  const keys = await cache.keys();
+  await Promise.all(keys.map(oldRequest => {
+    const oldUrl = new URL(oldRequest.url);
+    if (oldUrl.pathname === currentUrl.pathname && oldRequest.url !== request.url) {
+      return cache.delete(oldRequest);
+    }
+  }));
+
+  return response;
 }
 
 self.addEventListener('fetch', event => {
@@ -55,43 +77,24 @@ self.addEventListener('fetch', event => {
 
   const url = new URL(request.url);
 
-  // Real-time transport APIs must never be persisted by the Service Worker.
+  // Never cache live ETA / schedule responses in the Service Worker.
   if (LIVE_API_HOSTS.has(url.hostname)) return;
 
-  // Always retrieve the latest GitHub Action cache-health metadata.
-  if (
-    url.origin === self.location.origin &&
-    url.pathname.endsWith('/data/transport-meta.json')
-  ) {
+  if (url.origin === self.location.origin && url.pathname.endsWith('/data/transport-meta.json')) {
     event.respondWith(fetch(request, { cache: 'no-store' }));
     return;
   }
 
-  // Daily static mirror JSON: cache each service-day URL after first download.
   if (url.origin === self.location.origin && url.pathname.includes('/data/')) {
-    event.respondWith(
-      caches.match(request).then(cached => {
-        if (cached) return cached;
-        return fetch(request).then(async response => {
-          if (response && response.status === 200) {
-            const cache = await caches.open(CACHE_NAME);
-            await cache.put(request, response.clone());
-          }
-          return response;
-        });
-      })
-    );
+    event.respondWith(cacheDailyStatic(request));
     return;
   }
 
-  // IMPORTANT: navigation must be network-first.
-  // This prevents an old Service Worker from keeping an old index.html forever.
   if (request.mode === 'navigate') {
     event.respondWith(networkFirst(request, './index.html'));
     return;
   }
 
-  // App HTML/CSS/JS/manifest are also network-first, with offline fallback.
   if (url.origin === self.location.origin) {
     event.respondWith(networkFirst(request));
   }

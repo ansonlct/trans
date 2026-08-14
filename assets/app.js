@@ -1,21 +1,33 @@
 'use strict';
 
-const APP_VERSION = '6.1.0';
+const APP_VERSION = '6.2.0';
 
 function renderAppVersion() {
     const el = document.getElementById('app-version-value');
     if (el) el.textContent = `v${APP_VERSION}`;
 }
 
+let settingsReturnFocus = null;
+
 function openSettings() {
+        settingsReturnFocus = document.activeElement;
         document.getElementById('modal-overlay').classList.add('open');
-        document.getElementById('settings-modal').classList.add('open');
+        const modal = document.getElementById('settings-modal');
+        modal.classList.add('open');
         renderAppVersion();
         refreshCacheIndicators();
+        requestAnimationFrame(() => {
+            const closeButton = modal.querySelector('.close-btn');
+            if (closeButton) closeButton.focus({ preventScroll: true });
+        });
     }
     function closeSettings() {
         document.getElementById('modal-overlay').classList.remove('open');
         document.getElementById('settings-modal').classList.remove('open');
+        if (settingsReturnFocus && typeof settingsReturnFocus.focus === 'function') {
+            settingsReturnFocus.focus({ preventScroll: true });
+        }
+        settingsReturnFocus = null;
     }
     function toggleDarkMode() {
         const isChecked = document.getElementById('dark-mode-toggle').checked;
@@ -239,6 +251,8 @@ function openSettings() {
 
     // 共用 JSON 快取：靜態路線/車站資料長快取，ETA/列車資料短快取，減少重覆請求。
     window.apiJsonCache = new Map();
+    // Share identical concurrent requests so multiple UI components never hit the same endpoint twice.
+    window.apiJsonInflight = new Map();
 
     function isHongKongTransportApi(url) {
         return /^https:\/\/(data\.etagmb\.gov\.hk|data\.etabus\.gov\.hk|rt\.data\.gov\.hk)\//i.test(String(url || ''));
@@ -347,83 +361,127 @@ function openSettings() {
     }
 
     async function fetchJsonCached(url, { ttl = 0, timeout = 8000 } = {}) {
+        const requestKey = String(url || '');
         const now = Date.now();
-        const cached = window.apiJsonCache.get(url);
+        const cached = window.apiJsonCache.get(requestKey);
         if (ttl > 0 && cached && (now - cached.time) < ttl) return cached.data;
 
-        // Heavy static route/stop indexes come from the repository's daily mirror first.
-        // This removes repeated full-list downloads when users reopen the site.
-        if (DAILY_STATIC_FILES.has(String(url || ''))) {
-            try {
-                const mirrored = await fetchDailyStaticFile(url, timeout);
-                if (mirrored) {
-                    window.apiJsonCache.set(url, { time: now, data: mirrored });
-                    return mirrored;
-                }
-            } catch (err) {
-                console.warn('Daily static mirror unavailable; falling back to official API.', err);
-            }
-        }
+        // A surprisingly large number of screens can ask for the same route/ETA at once.
+        // Reuse the same Promise instead of creating duplicate HTTP requests.
+        const existing = window.apiJsonInflight.get(requestKey);
+        if (existing) return existing;
 
-        const usePersistentCache = shouldPersistTransportJson(url, ttl);
-        const persistentKey = usePersistentCache ? getPersistentJsonCacheKey(url) : null;
-        if (persistentKey) {
-            const raw = safeLocalStorageGet(persistentKey);
-            if (raw) {
+        const task = (async () => {
+            // Heavy static route/stop indexes come from the repository's daily mirror first.
+            if (DAILY_STATIC_FILES.has(requestKey)) {
                 try {
-                    const stored = JSON.parse(raw);
-                    if (stored && stored.time && (now - stored.time) < ttl) {
-                        window.apiJsonCache.set(url, { time: stored.time, data: stored.data });
-                        return stored.data;
+                    const mirrored = await fetchDailyStaticFile(requestKey, timeout);
+                    if (mirrored) {
+                        window.apiJsonCache.set(requestKey, { time: Date.now(), data: mirrored });
+                        return mirrored;
                     }
-                } catch (e) {}
-            }
-        }
-
-        const urlsToTry = getJsonFetchUrls(url);
-        let lastError = null;
-
-        for (const fetchUrl of urlsToTry) {
-            const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), timeout);
-            try {
-                const res = await fetch(fetchUrl, { signal: controller.signal, cache: 'no-store' });
-                if (!res.ok) throw new Error(`HTTP ${res.status}: ${fetchUrl}`);
-                const text = await res.text();
-                const data = parseJsonTextSafely(text);
-                if (ttl > 0) window.apiJsonCache.set(url, { time: now, data });
-                if (persistentKey) {
-                    safeLocalStorageSet(persistentKey, JSON.stringify({ time: now, data }));
+                } catch (err) {
+                    console.warn('Daily static mirror unavailable; falling back to official API.', err);
                 }
-                return data;
-            } catch (err) {
-                lastError = err;
-                console.warn('JSON fetch failed, trying next source:', fetchUrl, err);
-            } finally {
-                clearTimeout(timer);
+            }
+
+            const usePersistentCache = shouldPersistTransportJson(requestKey, ttl);
+            const persistentKey = usePersistentCache ? getPersistentJsonCacheKey(requestKey) : null;
+            if (persistentKey) {
+                const raw = safeLocalStorageGet(persistentKey);
+                if (raw) {
+                    try {
+                        const stored = JSON.parse(raw);
+                        if (stored && stored.time && (Date.now() - stored.time) < ttl) {
+                            window.apiJsonCache.set(requestKey, { time: stored.time, data: stored.data });
+                            return stored.data;
+                        }
+                    } catch (e) {}
+                }
+            }
+
+            const urlsToTry = getJsonFetchUrls(requestKey);
+            let lastError = null;
+
+            for (const fetchUrl of urlsToTry) {
+                const controller = new AbortController();
+                const timer = setTimeout(() => controller.abort(), timeout);
+                try {
+                    const res = await fetch(fetchUrl, { signal: controller.signal, cache: 'no-store' });
+                    if (!res.ok) throw new Error(`HTTP ${res.status}: ${fetchUrl}`);
+                    const data = parseJsonTextSafely(await res.text());
+                    if (ttl > 0) window.apiJsonCache.set(requestKey, { time: Date.now(), data });
+                    if (persistentKey) {
+                        safeLocalStorageSet(persistentKey, JSON.stringify({ time: Date.now(), data }));
+                    }
+                    return data;
+                } catch (err) {
+                    lastError = err;
+                    console.warn('JSON fetch failed, trying next source:', fetchUrl, err);
+                } finally {
+                    clearTimeout(timer);
+                }
+            }
+            throw lastError || new Error(`Fetch failed: ${requestKey}`);
+        })();
+
+        window.apiJsonInflight.set(requestKey, task);
+        try {
+            return await task;
+        } finally {
+            if (window.apiJsonInflight.get(requestKey) === task) {
+                window.apiJsonInflight.delete(requestKey);
             }
         }
-        throw lastError || new Error(`Fetch failed: ${url}`);
     }
+
 
     const runSoon = (fn) => {
         if ('requestIdleCallback' in window) requestIdleCallback(fn, { timeout: 1200 });
         else setTimeout(fn, 0);
     };
 
+
+    async function mapWithConcurrency(items, limit, worker) {
+        const list = Array.from(items || []);
+        if (list.length === 0) return [];
+        const results = new Array(list.length);
+        let nextIndex = 0;
+        const workerCount = Math.max(1, Math.min(Number(limit) || 1, list.length));
+
+        async function runWorker() {
+            while (true) {
+                const index = nextIndex++;
+                if (index >= list.length) return;
+                results[index] = await worker(list[index], index);
+            }
+        }
+
+        await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+        return results;
+    }
+
     function switchTab(tabId) {
+        if (currentTab === tabId) {
+            const currentContent = document.getElementById(`tab-${tabId}`);
+            if (currentContent && currentContent.scrollTop > 0) {
+                currentContent.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+            return;
+        }
+
         currentTab = tabId;
         document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
         document.getElementById(`tab-${tabId}`).classList.add('active');
         document.querySelectorAll('.tab-item').forEach((el, index) => {
             el.classList.toggle('active', index + 1 === tabId);
         });
-        
+
         const titles = {1: '白石角出發', 2: '我要回家', 3: '收藏', 4: '全港巴士/小巴查詢'};
         document.getElementById('page-title').innerText = titles[tabId];
-        
+
         if (tabId !== 4) hideRouteKeyboard();
-        if (tabId === 1 || tabId === 2) refreshAll();
+        if (tabId === 1 || tabId === 2) refreshAll(false);
         if (tabId === 3) renderFavorites();
         if (tabId === 4) initTab4();
     }
@@ -444,9 +502,14 @@ function openSettings() {
     }
     function smoothRefresh(elementId, fetchFunc) {
         const el = document.getElementById(elementId);
+        if (!el) return;
         el.classList.add('fading');
-        setTimeout(() => { fetchFunc().then(() => { el.classList.remove('fading'); }); }, 300);
+        setTimeout(async () => {
+            try { await fetchFunc(); }
+            finally { el.classList.remove('fading'); }
+        }, 160);
     }
+
 
     // --- Tab 1 & Tab 2 Fetching Logic ---
     async function fetchKMB_PokYin() {
@@ -691,15 +754,55 @@ function openSettings() {
         }
     }
 
-    function refreshAll() {
-        document.getElementById('last-updated').innerText = '最後更新: ' + new Date().toLocaleTimeString();
-        if (currentTab === 1) {
-            fetchKMB_PokYin(); fetchGMB('28A'); fetchGMB('28S'); fetchMTR_Uni();
-        } else if (currentTab === 2) {
-            fetchMTR_Return(); fetchKMB_Uni();
-        } else if (currentTab === 3) {
-            refreshFavoritesEta();
+    const REFRESH_MIN_INTERVAL_MS = 8000;
+    const lastRefreshAtByTab = new Map();
+    const refreshPromiseByTab = new Map();
+
+    function invalidateLiveTransportMemoryCache() {
+        for (const key of window.apiJsonCache.keys()) {
+            if (/\/eta(?:\/|$)|\/route-eta\/|\/eta\/route-stop\/|getSchedule\.php/i.test(String(key))) {
+                window.apiJsonCache.delete(key);
+            }
         }
+    }
+
+    async function refreshAll(force = false) {
+        const tabId = currentTab;
+        const now = Date.now();
+        const existing = refreshPromiseByTab.get(tabId);
+        if (existing) return existing;
+
+        if (!force && now - (lastRefreshAtByTab.get(tabId) || 0) < REFRESH_MIN_INTERVAL_MS) return;
+        if (force) invalidateLiveTransportMemoryCache();
+
+        const updateEl = document.getElementById('last-updated');
+        if (updateEl) updateEl.innerText = '更新中…';
+
+        let jobs = [];
+        if (tabId === 1) {
+            jobs = [fetchKMB_PokYin(), fetchGMB('28A'), fetchGMB('28S'), fetchMTR_Uni()];
+        } else if (tabId === 2) {
+            jobs = [fetchMTR_Return(), fetchKMB_Uni()];
+        } else if (tabId === 3) {
+            jobs = [refreshFavoritesEta()];
+        } else {
+            return;
+        }
+
+        const task = Promise.allSettled(jobs).then(results => {
+            lastRefreshAtByTab.set(tabId, Date.now());
+            const failed = results.filter(r => r.status === 'rejected').length;
+            if (updateEl && currentTab === tabId) {
+                const time = new Date().toLocaleTimeString('zh-HK', { hour: '2-digit', minute: '2-digit', hour12: false });
+                updateEl.innerText = failed === jobs.length ? `更新失敗 · ${time}` : `最後更新: ${time}`;
+            }
+            return results;
+        }).finally(() => {
+            if (refreshPromiseByTab.get(tabId) === task) refreshPromiseByTab.delete(tabId);
+        });
+
+        refreshPromiseByTab.set(tabId, task);
+        return task;
     }
 
     function getDistance(lat1, lon1, lat2, lon2) {
@@ -795,7 +898,9 @@ function openSettings() {
                 const data = await fetchJsonCached(`https://rt.data.gov.hk/v2/transport/citybus/route-stop/CTB/${route}/${bound}`, { ttl: 86400000, timeout: 10000 });
                 const stops = data.data || [];
 
-                await Promise.all(stops.map(async (s) => {
+                // Do not open dozens of Citybus stop-detail connections at once.
+                // Six workers keeps the UI/network responsive and is friendlier to the public API.
+                await mapWithConcurrency(stops, 6, async (s) => {
                     if (!window.globalStopsMap[s.stop] || !s.lat || !s.long) {
                         try {
                             const sData = await fetchJsonCached(`https://rt.data.gov.hk/v2/transport/citybus/stop/${s.stop}`, { ttl: 86400000, timeout: 6000 });
@@ -805,7 +910,7 @@ function openSettings() {
                             s.long = s.long || sData.data.long;
                         } catch(e) {}
                     }
-                }));
+                });
                 window.routeStopsCache[key] = stops;
                 return stops;
             } else {
@@ -1301,7 +1406,7 @@ function openSettings() {
         const favorites = getFavoriteStops();
         if (favorites.length === 0) return;
 
-        favorites.forEach(async fav => {
+        await mapWithConcurrency(favorites, 4, async fav => {
             const el = document.getElementById(makeFavoriteEtaDomId(fav.key));
             if (!el) return;
             try {
@@ -1313,6 +1418,7 @@ function openSettings() {
             }
         });
     }
+
 
     function renderFavorites() {
         const container = document.getElementById('favorites-list');
@@ -2075,12 +2181,53 @@ function openSettings() {
         window.tab4SearchText = document.getElementById('route-search-input').value.trim().toUpperCase();
         routeKeyboardSync();
         clearTimeout(window.tab4SearchTimeout);
-        setTab4Loading(true);
+        window.tab4SearchTimeout = setTimeout(() => updateTab4View(), 140);
+    }
 
-        window.tab4SearchTimeout = setTimeout(() => {
-            updateTab4View();
-            setTab4Loading(false);
-        }, 120);
+
+    const TAB4_PAGE_SIZE = 20;
+    let tab4EtaObserver = null;
+    const tab4EtaObservedKeys = new Set();
+
+    function resetTab4EtaObserver() {
+        if (tab4EtaObserver) tab4EtaObserver.disconnect();
+        tab4EtaObserver = null;
+        tab4EtaObservedKeys.clear();
+    }
+
+    function getTab4EtaObserver() {
+        if (tab4EtaObserver || !('IntersectionObserver' in window)) return tab4EtaObserver;
+        const root = document.getElementById('tab-4');
+        tab4EtaObserver = new IntersectionObserver(entries => {
+            entries.forEach(entry => {
+                if (!entry.isIntersecting) return;
+                const key = entry.target && entry.target.dataset ? entry.target.dataset.routeKey : '';
+                tab4EtaObserver.unobserve(entry.target);
+                if (key) {
+                    tab4EtaObservedKeys.delete(key);
+                    scheduleTab4EtaChecks([key]);
+                }
+            });
+        }, { root, rootMargin: '450px 0px', threshold: 0.01 });
+        return tab4EtaObserver;
+    }
+
+    function scheduleTab4EtaChecks(groupKeys) {
+        const keys = Array.from(new Set(groupKeys || []));
+        const observer = getTab4EtaObserver();
+        if (!observer) {
+            runSoon(() => fetchAndApplyEtaStatusForTab4Keys(keys));
+            return;
+        }
+        requestAnimationFrame(() => {
+            keys.forEach(key => {
+                if (tab4EtaObservedKeys.has(key)) return;
+                const row = document.getElementById(makeTab4RowId(key));
+                if (!row) return;
+                tab4EtaObservedKeys.add(key);
+                observer.observe(row);
+            });
+        });
     }
 
 
@@ -2092,6 +2239,7 @@ function openSettings() {
             target = document.getElementById('tab4-routes-append-target');
         }
         
+        resetTab4EtaObserver();
         target.innerHTML = '';
         window.tab4CurrentPage = 0;
         window.isTab4LoadingMore = false;
@@ -2136,12 +2284,12 @@ function openSettings() {
 
     async function loadMoreTab4Routes() {
         if (window.isTab4LoadingMore) return;
-        if (window.tab4CurrentPage * 30 >= window.tab4DisplayRoutes.length) return;
+        if (window.tab4CurrentPage * TAB4_PAGE_SIZE >= window.tab4DisplayRoutes.length) return;
         
         window.isTab4LoadingMore = true;
 
-        const start = window.tab4CurrentPage * 30;
-        const end = start + 30;
+        const start = window.tab4CurrentPage * TAB4_PAGE_SIZE;
+        const end = start + TAB4_PAGE_SIZE;
         const chunkNames = window.tab4DisplayRoutes.slice(start, end);
 
         // 小巴方向資料改為背景補齊：先顯示路線號碼，方向載入後即時更新該列。
@@ -2171,7 +2319,7 @@ function openSettings() {
         window.tab4CurrentPage++;
         window.isTab4LoadingMore = false;
 
-        fetchAndApplyEtaStatusForTab4Keys(chunkNames);
+        scheduleTab4EtaChecks(chunkNames);
     }
 
 
@@ -2491,7 +2639,7 @@ function openSettings() {
 
         let rowStyle = isRowInactive ? 'opacity: 0.45; filter: grayscale(50%);' : '';
 
-        const rowIdAttr = !isTab3 ? `id="${makeTab4RowId(rName)}"` : '';
+        const rowIdAttr = !isTab3 ? `id="${makeTab4RowId(rName)}" data-route-key="${escapeHtml(rName)}"` : '';
 
         return `
         <div ${rowIdAttr} class="route-list-row" style="${rowStyle}">
@@ -2842,6 +2990,12 @@ function openSettings() {
     initSettings();
     renderAppVersion();
 
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && document.getElementById('settings-modal').classList.contains('open')) {
+            closeSettings();
+        }
+    });
+
     // Pause the 30-second ETA polling while the tab is hidden to reduce battery/network use.
     let refreshLoopTimer = null;
     const stopRefreshLoop = () => {
@@ -2864,7 +3018,7 @@ function openSettings() {
 
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
         window.addEventListener('load', () => {
-            navigator.serviceWorker.register('./sw.js?v=6.1.0', { updateViaCache: 'none' }).catch(err => {
+            navigator.serviceWorker.register('./sw.js?v=6.2.0', { updateViaCache: 'none' }).catch(err => {
                 console.warn('Service worker registration failed:', err);
             });
         });

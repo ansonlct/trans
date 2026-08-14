@@ -1,4 +1,4 @@
-# Transport App v6.1.0
+# Transport App v6.2.0
 
 # 白石角出行 v6.0.0 — GitHub Pages + 九巴 / 城巴 / 專線小巴每日靜態快取
 
@@ -112,3 +112,15 @@ transport-app/
 - Versioned CSS/JS URLs prevent stale browser assets.
 - Service Worker uses network-first for app shell/navigation.
 - GitHub Action rebases onto latest main before pushing daily data.
+
+
+## v6.2.0 performance / UX pass
+- Deduplicates identical concurrent API requests.
+- Coordinates ETA refreshes and prevents repeated refreshes within 8 seconds.
+- Manual refresh now invalidates live ETA memory cache.
+- Limits Citybus stop-detail concurrency to 6 and favorite ETA concurrency to 4.
+- Loads 20 route rows per page instead of 30.
+- ETA availability checks in the route directory are lazy and run only near the viewport.
+- Route-search redraw no longer flashes the global loading bar on every keystroke.
+- Service Worker separates app/data caches and automatically removes old daily dataset entries.
+- Settings dialog supports Escape, focus return, small-screen scrolling and v6.2.0 version display.
