@@ -28,6 +28,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -37,8 +39,11 @@ jobs:
       - name: Download daily static transport datasets
         run: node scripts/update-transport-data.mjs
 
-      - name: Commit updated data
+      - name: Commit and push updated data
+        shell: bash
         run: |
+          set -e
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
@@ -50,4 +55,10 @@ jobs:
           fi
 
           git commit -m "chore: update daily transport static data"
-          git push
+
+          # main may have changed while this workflow was downloading data.
+          # Rebase our generated-data commit onto the newest remote main first.
+          git fetch origin main
+          git rebase origin/main
+
+          git push origin HEAD:main
