@@ -17,6 +17,7 @@ on:
 permissions:
   contents: write
 
+# Never let two transport-data jobs write the generated JSON at the same time.
 concurrency:
   group: daily-transport-static-data
   cancel-in-progress: false
@@ -36,27 +37,39 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Download daily static transport datasets
-        run: node scripts/update-transport-data.mjs
-
-      - name: Commit and push updated data
+      - name: Generate, commit and push latest transport data
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add data/
+          # Generated JSON files must never be line-merged. If main changes while
+          # this job is running, restart from the new main and regenerate them.
+          for attempt in 1 2 3; do
+            echo "Transport data update attempt ${attempt}/3"
 
-          if git diff --cached --quiet; then
-            echo "No static transport data changes."
-            exit 0
-          fi
+            git fetch origin main
+            git reset --hard origin/main
 
-          git commit -m "chore: update daily transport static data"
+            node scripts/update-transport-data.mjs
+            git add data/
 
-          git fetch origin main
-          git rebase origin/main
+            if git diff --cached --quiet; then
+              echo "No static transport data changes."
+              exit 0
+            fi
 
-          git push origin HEAD:main
+            git commit -m "chore: update daily transport static data"
+
+            if git push origin HEAD:main; then
+              echo "Static transport data pushed successfully."
+              exit 0
+            fi
+
+            echo "main changed before push; regenerating from the latest main instead of rebasing generated JSON."
+          done
+
+          echo "Unable to push after 3 regeneration attempts."
+          exit 1
