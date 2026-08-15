@@ -139,3 +139,16 @@ body.route-keyboard-open #tab-4{padding-bottom:calc(var(--route-keyboard-reserve
 .opposite-chevron{font-size:1.55rem;line-height:1;opacity:.8;flex:0 0 auto;}
 .detail-eta-loading{font-variant-numeric:tabular-nums;}
 .detail-eta-pending{font-variant-numeric:tabular-nums;min-width:70px;text-align:right;}
+
+
+/* v6.6: searchable clear button + count-focused cache status */
+.route-search-field-wrap{position:relative;}
+.route-search-icon{position:absolute;left:12px;top:50%;transform:translateY(-50%);font-size:1.1rem;color:var(--text-sub);pointer-events:none;}
+.search-input-field{padding-right:42px;}
+.route-search-clear{appearance:none;-webkit-appearance:none;position:absolute;right:7px;top:50%;transform:translateY(-50%) scale(.86);width:28px;height:28px;border:0;border-radius:50%;display:flex;align-items:center;justify-content:center;background:rgba(142,142,147,.18);color:var(--text-sub);font-family:inherit;font-size:1.25rem;font-weight:700;line-height:1;opacity:0;visibility:hidden;pointer-events:none;transition:opacity .16s ease,transform .16s ease,background .16s ease;touch-action:manipulation;}
+.route-search-clear.visible{opacity:1;visibility:visible;pointer-events:auto;transform:translateY(-50%) scale(1);}
+.route-search-clear:active{background:rgba(142,142,147,.32);transform:translateY(-50%) scale(.92);}
+.cache-status-row{min-height:43px;gap:12px;}
+.cache-status-result{gap:10px;min-width:0;}
+.cache-status-counts{color:var(--text-sub);font-size:.78rem;font-weight:650;font-variant-numeric:tabular-nums;white-space:nowrap;}
+@media(max-width:350px){.cache-status-counts{font-size:.72rem;}.cache-status-row{gap:8px;}}

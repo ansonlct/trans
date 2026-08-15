@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '6.5.0';
+const APP_VERSION = '6.6.0';
 
 function renderAppVersion() {
     const el = document.getElementById('app-version-value');
@@ -112,25 +112,109 @@ function setSettingsCacheView(showCache) {
         };
     }
 
-    function setCacheIndicator(operator, info, isStaleServiceDay = false) {
+    function getLocalCachedStationCounts() {
+        const result = { citybus: 0, gmb: 0 };
+        const citybusStops = new Set();
+        const gmbStops = new Set();
+        const prefix = 'psk_transport_static_json_v1::';
+        try {
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (!key || !key.startsWith(prefix)) continue;
+                let url = '';
+                try { url = decodeURIComponent(key.slice(prefix.length)); } catch (e) { continue; }
+                const isCitybusRouteStop = /rt\.data\.gov\.hk\/v2\/transport\/citybus\/route-stop\/CTB\//i.test(url);
+                const isGmbRouteStop = /data\.etagmb\.gov\.hk\/route-stop\//i.test(url);
+                if (!isCitybusRouteStop && !isGmbRouteStop) continue;
+                const raw = localStorage.getItem(key);
+                if (!raw) continue;
+                let stored;
+                try { stored = JSON.parse(raw); } catch (e) { continue; }
+                if (!stored || !stored.time || (Date.now() - Number(stored.time)) >= 86400000) continue;
+                const payload = stored.data;
+                if (isCitybusRouteStop) {
+                    const rows = payload && Array.isArray(payload.data) ? payload.data : [];
+                    rows.forEach(item => {
+                        const stopId = item && (item.stop || item.stop_id || item.id);
+                        if (stopId) citybusStops.add(String(stopId));
+                    });
+                } else {
+                    const rows = payload && payload.data && Array.isArray(payload.data.route_stops)
+                        ? payload.data.route_stops
+                        : (payload && Array.isArray(payload.data) ? payload.data : []);
+                    rows.forEach(item => {
+                        const stopId = item && (item.stop_id || item.stop || item.id || item.name_tc);
+                        if (stopId) gmbStops.add(String(stopId));
+                    });
+                }
+            }
+        } catch (e) {
+            console.warn('Unable to count locally cached stations', e);
+        }
+        result.citybus = citybusStops.size;
+        result.gmb = gmbStops.size;
+        return result;
+    }
+
+    function getCacheLoadedCounts(meta, operator) {
+        const declared = meta && meta.loadedCounts && meta.loadedCounts[operator];
+        const datasets = (meta && meta.datasets) || {};
+        let routeNumbers = Number(declared && declared.routeNumbers);
+        let stations = Number(declared && declared.stations);
+
+        if (!Number.isFinite(routeNumbers)) {
+            if (operator === 'kmb') routeNumbers = Number(datasets['kmb-route.json'] && datasets['kmb-route.json'].routeNumbers);
+            if (operator === 'citybus') routeNumbers = Number(datasets['ctb-route.json'] && datasets['ctb-route.json'].routeNumbers);
+            if (operator === 'gmb') {
+                routeNumbers = ['HKI', 'KLN', 'NT'].reduce((sum, region) => {
+                    const item = datasets[`gmb-route-${region}.json`];
+                    const n = Number(item && item.routeNumbers);
+                    return sum + (Number.isFinite(n) ? n : 0);
+                }, 0);
+            }
+        }
+        if (!Number.isFinite(stations)) {
+            stations = operator === 'kmb' ? Number(datasets['kmb-stop.json'] && datasets['kmb-stop.json'].stations) : 0;
+        }
+
+        // Backwards compatibility with v6.5 metadata until the next daily Action refresh.
+        if (!Number.isFinite(routeNumbers) || routeNumbers <= 0) {
+            if (operator === 'kmb') routeNumbers = Number(datasets['kmb-route.json'] && datasets['kmb-route.json'].records) || 0;
+            if (operator === 'citybus') routeNumbers = Number(datasets['ctb-route.json'] && datasets['ctb-route.json'].records) || 0;
+            if (operator === 'gmb') {
+                routeNumbers = ['HKI', 'KLN', 'NT'].reduce((sum, region) => sum + (Number(datasets[`gmb-route-${region}.json`] && datasets[`gmb-route-${region}.json`].records) || 0), 0);
+            }
+        }
+        if ((!Number.isFinite(stations) || stations <= 0) && operator === 'kmb') {
+            stations = Number(datasets['kmb-stop.json'] && datasets['kmb-stop.json'].records) || 0;
+        }
+        if (!Number.isFinite(stations) || stations < 0) stations = 0;
+
+        const localStations = getLocalCachedStationCounts();
+        if (operator === 'citybus') stations = Math.max(stations, localStations.citybus);
+        if (operator === 'gmb') stations = Math.max(stations, localStations.gmb);
+        return { routeNumbers: Math.max(0, routeNumbers || 0), stations: Math.max(0, stations || 0) };
+    }
+
+    function setCacheIndicator(operator, info, isStaleServiceDay = false, counts = null) {
         const row = document.getElementById(`cache-status-${operator}`);
         if (!row) return;
         const dot = row.querySelector('.cache-status-dot');
-        const text = row.querySelector('.cache-status-text');
+        const countsEl = row.querySelector('.cache-status-counts');
         let status = info && info.status ? info.status : 'fail';
         if (isStaleServiceDay && status === 'success') status = 'partial';
 
         if (dot) dot.className = `cache-status-dot ${status}`;
-        if (text) {
-            const labels = { success: 'Success', partial: 'Partially success', fail: 'Fail' };
-            const counts = info && info.total ? ` · ${Math.min(info.fresh || 0, info.total)}/${info.total} 最新` : '';
-            text.textContent = `${labels[status] || 'Fail'}${counts}${isStaleServiceDay && status !== 'fail' ? ' · 舊快取' : ''}`;
+        if (countsEl) {
+            const routeNumbers = counts && Number.isFinite(Number(counts.routeNumbers)) ? Number(counts.routeNumbers) : null;
+            const stations = counts && Number.isFinite(Number(counts.stations)) ? Number(counts.stations) : null;
+            countsEl.textContent = `號碼 ${routeNumbers === null ? '--' : routeNumbers.toLocaleString('zh-HK')} · 車站 ${stations === null ? '--' : stations.toLocaleString('zh-HK')}`;
         }
     }
 
     function setAllCacheIndicatorsFailed(message) {
         ['kmb', 'citybus', 'gmb'].forEach(operator => {
-            setCacheIndicator(operator, { status: 'fail', fresh: 0, available: 0, total: CACHE_OPERATOR_DATASETS[operator].length });
+            setCacheIndicator(operator, { status: 'fail', fresh: 0, available: 0, total: CACHE_OPERATOR_DATASETS[operator].length }, false, null);
         });
         const updatedEl = document.getElementById('cache-status-updated');
         if (updatedEl) updatedEl.textContent = message || '最後更新：無法讀取快取狀態';
@@ -153,9 +237,9 @@ function setSettingsCacheView(showCache) {
             const row = document.getElementById(`cache-status-${operator}`);
             if (!row) return;
             const dot = row.querySelector('.cache-status-dot');
-            const text = row.querySelector('.cache-status-text');
+            const counts = row.querySelector('.cache-status-counts');
             if (dot) dot.className = 'cache-status-dot unknown';
-            if (text) text.textContent = '檢查中';
+            if (counts) counts.textContent = '號碼 -- · 車站 --';
         });
 
         try {
@@ -169,7 +253,7 @@ function setSettingsCacheView(showCache) {
             const isStaleServiceDay = !metaServiceDay || metaServiceDay !== currentServiceDay;
 
             ['kmb', 'citybus', 'gmb'].forEach(operator => {
-                setCacheIndicator(operator, computeCacheOperatorStatus(meta, operator), isStaleServiceDay);
+                setCacheIndicator(operator, computeCacheOperatorStatus(meta, operator), isStaleServiceDay, getCacheLoadedCounts(meta, operator));
             });
 
             if (updatedEl) {
@@ -2049,7 +2133,8 @@ function setSettingsCacheView(showCache) {
         const keyboard = document.getElementById('route-keyboard');
         if (!keyboard || !keyboard.classList.contains('open')) return;
         const input = document.getElementById('route-search-input');
-        if (keyboard.contains(event.target) || (input && (event.target === input || input.contains?.(event.target)))) return;
+        const searchWrap = document.querySelector('.route-search-field-wrap');
+        if (keyboard.contains(event.target) || (searchWrap && searchWrap.contains(event.target)) || (input && (event.target === input || input.contains?.(event.target)))) return;
         hideRouteKeyboard();
     }, true);
 
@@ -2252,8 +2337,33 @@ function setSettingsCacheView(showCache) {
     }
 
 
+    function syncTab4SearchClearButton() {
+        const input = document.getElementById('route-search-input');
+        const clearButton = document.getElementById('route-search-clear');
+        if (!clearButton) return;
+        const hasValue = Boolean(input && input.value);
+        clearButton.classList.toggle('visible', hasValue);
+        clearButton.setAttribute('aria-hidden', hasValue ? 'false' : 'true');
+        clearButton.tabIndex = hasValue ? 0 : -1;
+    }
+
+    function clearTab4Search() {
+        const input = document.getElementById('route-search-input');
+        if (!input) return;
+        const keyboard = document.getElementById('route-keyboard');
+        const keyboardWasOpen = Boolean(keyboard && keyboard.classList.contains('open'));
+        input.value = '';
+        onTab4Search();
+        if (keyboardWasOpen) {
+            try { input.focus({ preventScroll: true }); } catch (e) { input.focus(); }
+        } else {
+            input.blur();
+        }
+    }
+
     function onTab4Search() {
         window.tab4SearchText = document.getElementById('route-search-input').value.trim().toUpperCase();
+        syncTab4SearchClearButton();
         routeKeyboardSync();
         clearTimeout(window.tab4SearchTimeout);
         window.tab4SearchTimeout = setTimeout(() => updateTab4View(), 140);
@@ -3166,7 +3276,7 @@ function setSettingsCacheView(showCache) {
 
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
         window.addEventListener('load', () => {
-            navigator.serviceWorker.register('./sw.js?v=6.5.0', { updateViaCache: 'none' }).catch(err => {
+            navigator.serviceWorker.register('./sw.js?v=6.6.0', { updateViaCache: 'none' }).catch(err => {
                 console.warn('Service worker registration failed:', err);
             });
         });

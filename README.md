@@ -1,4 +1,10 @@
-# Transport App v6.5.0
+# Transport App v6.6.0
+
+## v6.6.0 Search clear button / cache loaded counts
+- 巴士/小巴搜尋格新增圓形 `×` 清除按鈕；只有輸入內容時顯示。
+- 快取狀態取消 Success / Partially success / Fail 文字與圖例，只保留狀態燈。
+- 每個營辦商顯示已載入「號碼」及「車站」數目。九巴取每日完整路線/車站數；城巴及小巴車站數會計入裝置已開啟路線的本機 24 小時快取。
+- 每日 `transport-meta.json` 新增 `loadedCounts`，並在各 dataset metadata 記錄 routeNumbers / stations。
 
 ## v6.5.0 KMB default / bottom keyboard / opposite-route layout / progress percentage
 - 巴士/小巴查詢預設選擇九巴。

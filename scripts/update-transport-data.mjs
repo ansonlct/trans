@@ -1,4 +1,4 @@
-import { access, mkdir, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 
 await mkdir('data', { recursive: true });
 
@@ -62,6 +62,48 @@ function countPayload(payload) {
   return Object.keys(payload).length;
 }
 
+function extractDatasetStats(filename, payload) {
+  const routeNumbers = new Set();
+  const stations = new Set();
+  const data = payload && payload.data !== undefined ? payload.data : payload;
+
+  const addRoute = value => {
+    const code = String(value ?? '').trim().toUpperCase();
+    if (code) routeNumbers.add(code);
+  };
+  const addStation = value => {
+    const id = String(value ?? '').trim();
+    if (id) stations.add(id);
+  };
+
+  if (filename === 'kmb-route.json' && Array.isArray(data)) {
+    data.forEach(item => {
+      if (item && String(item.service_type || '1') === '1') addRoute(item.route);
+    });
+  } else if (filename === 'kmb-stop.json' && Array.isArray(data)) {
+    data.forEach(item => item && addStation(item.stop || item.stop_id || item.id));
+  } else if (filename === 'ctb-route.json' && Array.isArray(data)) {
+    data.forEach(item => item && addRoute(item.route || item.route_no || item.route_code));
+  } else if (/^gmb-route-(?:HKI|KLN|NT)\.json$/.test(filename)) {
+    const visit = value => {
+      if (Array.isArray(value)) {
+        value.forEach(visit);
+        return;
+      }
+      if (value && typeof value === 'object') {
+        const code = value.route_code || value.route || value.route_no || value.routeName;
+        if (code) addRoute(code);
+        else Object.values(value).forEach(visit);
+        return;
+      }
+      if (typeof value === 'string' || typeof value === 'number') addRoute(value);
+    };
+    visit(data);
+  }
+
+  return { routeNumbers: routeNumbers.size, stations: stations.size };
+}
+
 async function saveRequired(filename, urls) {
   let lastError;
   for (const url of urls) {
@@ -70,8 +112,9 @@ async function saveRequired(filename, urls) {
       const count = countPayload(payload);
       if (count <= 0) throw new Error(`${url} returned no records`);
       await writeFile(`data/${filename}`, JSON.stringify(payload));
+      const stats = extractDatasetStats(filename, payload);
       console.log(`${filename}: ${count} records (${url})`);
-      return { filename, count, source: url, required: true, available: true, fresh: true, stale: false };
+      return { filename, count, stats, source: url, required: true, available: true, fresh: true, stale: false };
     } catch (error) {
       lastError = error;
       console.warn(`Source failed for ${filename}: ${error.message}`);
@@ -80,10 +123,22 @@ async function saveRequired(filename, urls) {
   // Preserve yesterday's file if it exists. A temporary outage from one provider
   // must not prevent the other operators from refreshing or fail the whole Action.
   const previousAvailable = await fileExists(`data/${filename}`);
+  let previousCount = 0;
+  let previousStats = { routeNumbers: 0, stations: 0 };
+  if (previousAvailable) {
+    try {
+      const previousPayload = JSON.parse(await readFile(`data/${filename}`, 'utf8'));
+      previousCount = countPayload(previousPayload);
+      previousStats = extractDatasetStats(filename, previousPayload);
+    } catch (readError) {
+      console.warn(`${filename}: previous cached file exists but could not be counted: ${readError.message}`);
+    }
+  }
   console.error(`${filename}: all sources failed; ${previousAvailable ? 'using previous cached file.' : 'no previous cached file available.'}`);
   return {
     filename,
-    count: 0,
+    count: previousCount,
+    stats: previousStats,
     source: null,
     required: true,
     available: previousAvailable,
@@ -100,15 +155,16 @@ async function saveOptional(filename, urls) {
       const count = countPayload(payload);
       if (count <= 0) throw new Error(`${url} returned no records`);
       await writeFile(`data/${filename}`, JSON.stringify(payload));
+      const stats = extractDatasetStats(filename, payload);
       console.log(`${filename}: ${count} records (${url})`);
-      return { filename, count, source: url, required: false, available: true, fresh: true, stale: false };
+      return { filename, count, stats, source: url, required: false, available: true, fresh: true, stale: false };
     } catch (error) {
       console.warn(`Optional source failed for ${filename}: ${error.message}`);
     }
   }
   await rm(`data/${filename}`, { force: true });
   console.warn(`${filename}: unavailable; web app will use live per-route fallback.`);
-  return { filename, count: 0, source: null, required: false, available: false, fresh: false, stale: false };
+  return { filename, count: 0, stats: { routeNumbers: 0, stations: 0 }, source: null, required: false, available: false, fresh: false, stale: false };
 }
 
 const jobs = [];
@@ -153,6 +209,8 @@ const updatedAt = new Date().toISOString();
 const serviceDay = getHongKongServiceDayKey(6, new Date(updatedAt));
 const summary = Object.fromEntries(jobs.map(j => [j.filename, {
   records: j.count,
+  routeNumbers: Number(j.stats?.routeNumbers || 0),
+  stations: Number(j.stats?.stations || 0),
   source: j.source,
   required: j.required,
   available: j.available !== false,
@@ -176,11 +234,27 @@ const operatorStatus = {
   gmb: summarizeOperator(['gmb-route-HKI.json', 'gmb-route-KLN.json', 'gmb-route-NT.json'])
 };
 
+const loadedCounts = {
+  kmb: {
+    routeNumbers: summary['kmb-route.json']?.routeNumbers || 0,
+    stations: summary['kmb-stop.json']?.stations || 0
+  },
+  citybus: {
+    routeNumbers: summary['ctb-route.json']?.routeNumbers || 0,
+    stations: 0
+  },
+  gmb: {
+    routeNumbers: ['HKI', 'KLN', 'NT'].reduce((sum, region) => sum + (summary[`gmb-route-${region}.json`]?.routeNumbers || 0), 0),
+    stations: 0
+  }
+};
+
 await writeFile('data/transport-meta.json', JSON.stringify({
   updatedAt,
   serviceDay,
   serviceDayCutoffHKT: '06:00',
   operatorStatus,
+  loadedCounts,
   datasets: summary,
   strategies: {
     kmbRouteStop: 'lazy-per-route',
