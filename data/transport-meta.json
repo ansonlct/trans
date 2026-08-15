@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-08-15T17:30:29.286Z",
+  "updatedAt": "2026-08-15T17:58:50.914Z",
   "serviceDay": "2026-08-15",
   "serviceDayCutoffHKT": "06:00",
   "operatorStatus": {
@@ -10,6 +10,12 @@
       "total": 2
     },
     "citybus": {
+      "status": "success",
+      "fresh": 1,
+      "available": 1,
+      "total": 1
+    },
+    "nlb": {
       "status": "success",
       "fresh": 1,
       "available": 1,
@@ -30,6 +36,10 @@
     "citybus": {
       "routeNumbers": 407,
       "stations": 2261
+    },
+    "nlb": {
+      "routeNumbers": 38,
+      "stations": 198
     },
     "gmb": {
       "routeNumbers": 572,
@@ -67,6 +77,16 @@
       "fresh": true,
       "stale": false
     },
+    "nlb-route.json": {
+      "records": 64,
+      "routeNumbers": 38,
+      "stations": 0,
+      "source": "https://rt.data.gov.hk/v2/transport/nlb/route.php?action=list",
+      "required": true,
+      "available": true,
+      "fresh": true,
+      "stale": false
+    },
     "gmb-route-HKI.json": {
       "records": 108,
       "routeNumbers": 109,
@@ -98,8 +118,8 @@
       "stale": false
     },
     "stop-search-index.json": {
-      "records": 7681,
-      "stations": 7681,
+      "records": 7776,
+      "stations": 7776,
       "source": "https://static.data.gov.hk/td/pt-headway-tc/gtfs.zip",
       "required": false,
       "available": true,
@@ -107,8 +127,8 @@
       "stale": false
     },
     "route-fares.json": {
-      "records": 61959,
-      "routeNumbers": 2255,
+      "records": 64458,
+      "routeNumbers": 2315,
       "source": "https://static.data.gov.hk/td/pt-headway-tc/gtfs.zip",
       "required": false,
       "available": true,
@@ -116,8 +136,8 @@
       "stale": false
     },
     "route-timetables.json": {
-      "records": 67978,
-      "routeNumbers": 2255,
+      "records": 69175,
+      "routeNumbers": 2315,
       "source": "https://static.data.gov.hk/td/pt-headway-tc/gtfs.zip",
       "required": false,
       "available": true,
@@ -128,6 +148,7 @@
   "strategies": {
     "kmbRouteStop": "lazy-per-route",
     "citybusRouteStop": "lazy-per-route-browser-daily-cache",
+    "nlbRouteStop": "lazy-per-route-browser-daily-cache",
     "gmbRouteDetail": "lazy-per-route",
     "stopSearch": "daily-gtfs-reverse-index",
     "fares": "daily-compact-gtfs-fare-index",
