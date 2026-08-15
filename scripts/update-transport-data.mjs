@@ -167,6 +167,7 @@ function gtfsAgencyOperators(agencyId) {
   if (id === 'KMB' || id === 'LWB') return ['KMB'];
   if (id === 'CTB') return ['CTB'];
   if (id === 'GMB') return ['GMB'];
+  if (id === 'NLB') return ['NLB'];
   if (id === 'KMB+CTB' || id === 'LWB+CTB') return ['KMB', 'CTB'];
   return [];
 }
@@ -261,7 +262,7 @@ async function buildStopSearchIndex() {
     // Merge physical stop IDs that normalize to the same station name.  The client
     // only needs a compact reverse index: station text -> operator/route numbers.
     const merged = new Map();
-    const operatorStations = { KMB: new Set(), CTB: new Set(), GMB: new Set() };
+    const operatorStations = { KMB: new Set(), CTB: new Set(), NLB: new Set(), GMB: new Set() };
     for (const [stopId, routeTokens] of stopRoutes) {
       const name = stopNames.get(stopId);
       if (!name || !routeTokens || routeTokens.size === 0) continue;
@@ -290,11 +291,12 @@ async function buildStopSearchIndex() {
         stationNames: stations.length,
         kmbStations: operatorStations.KMB.size,
         citybusStations: operatorStations.CTB.size,
+        nlbStations: operatorStations.NLB.size,
         gmbStations: operatorStations.GMB.size
       }
     };
     await writeFile('data/stop-search-index.json', JSON.stringify(payload));
-    console.log(`stop-search-index.json: ${stations.length} station names; KMB ${operatorStations.KMB.size}, CTB ${operatorStations.CTB.size}, GMB ${operatorStations.GMB.size}`);
+    console.log(`stop-search-index.json: ${stations.length} station names; KMB ${operatorStations.KMB.size}, CTB ${operatorStations.CTB.size}, NLB ${operatorStations.NLB.size}, GMB ${operatorStations.GMB.size}`);
 
     // Build a much smaller fare index for the browser.  The source fare matrix is
     // OD-based; the app only needs the fare from each boarding stop to the route's
@@ -520,7 +522,7 @@ async function buildStopSearchIndex() {
     const previousFareAvailable = await fileExists('data/route-fares.json');
     const previousTimetableAvailable = await fileExists('data/route-timetables.json');
     console.warn(`GTFS derived indexes: refresh failed; stop search ${previousAvailable ? 'kept' : 'missing'}, fares ${previousFareAvailable ? 'kept' : 'missing'}, timetables ${previousTimetableAvailable ? 'kept' : 'missing'} (${error.message})`);
-    let stats = { stationNames: 0, kmbStations: 0, citybusStations: 0, gmbStations: 0 };
+    let stats = { stationNames: 0, kmbStations: 0, citybusStations: 0, nlbStations: 0, gmbStations: 0 };
     let fareStats = { routes: 0, stopFares: 0 };
     let timetableStats = { routes: 0, fixedDepartures: 0, frequencyRanges: 0 };
     if (previousAvailable) {
@@ -565,6 +567,7 @@ async function buildStopSearchIndex() {
 function countPayload(payload) {
   if (!payload) return 0;
   if (Array.isArray(payload)) return payload.length;
+  if (Array.isArray(payload.routes)) return payload.routes.length;
   if (Array.isArray(payload.data)) return payload.data.length;
   const data = payload.data;
   if (data && typeof data === 'object') {
@@ -600,6 +603,9 @@ function extractDatasetStats(filename, payload) {
     data.forEach(item => item && addStation(item.stop || item.stop_id || item.id));
   } else if (filename === 'ctb-route.json' && Array.isArray(data)) {
     data.forEach(item => item && addRoute(item.route || item.route_no || item.route_code));
+  } else if (filename === 'nlb-route.json') {
+    const rows = payload && Array.isArray(payload.routes) ? payload.routes : [];
+    rows.forEach(item => item && addRoute(item.routeNo || item.route_no || item.route));
   } else if (/^gmb-route-(?:HKI|KLN|NT)\.json$/.test(filename)) {
     const visit = value => {
       if (Array.isArray(value)) {
@@ -706,6 +712,13 @@ jobs.push(await saveRequired('ctb-route.json', [
 await rm('data/ctb-stop.json', { force: true });
 await rm('data/ctb-route-stop.json', { force: true });
 
+// New Lantao Bus: route index is small and real-time. Stops / fares / ETA are
+// route-scoped in the official V2 API, so the browser loads them lazily. The TD
+// GTFS-derived indexes below also contribute NLB timetable / fare matching.
+jobs.push(await saveRequired('nlb-route.json', [
+  'https://rt.data.gov.hk/v2/transport/nlb/route.php?action=list'
+]));
+
 // Green minibus: the official API exposes route lists by region, not one global
 // all-stop file. Cache the three route indexes daily; route details/stops remain
 // lazy per selected route and ETA remains live.
@@ -784,6 +797,7 @@ function summarizeOperator(files) {
 const operatorStatus = {
   kmb: summarizeOperator(['kmb-route.json', 'kmb-stop.json']),
   citybus: summarizeOperator(['ctb-route.json']),
+  nlb: summarizeOperator(['nlb-route.json']),
   gmb: summarizeOperator(['gmb-route-HKI.json', 'gmb-route-KLN.json', 'gmb-route-NT.json'])
 };
 
@@ -795,6 +809,10 @@ const loadedCounts = {
   citybus: {
     routeNumbers: summary['ctb-route.json']?.routeNumbers || 0,
     stations: Number(stopSearchIndex.stats?.citybusStations || 0)
+  },
+  nlb: {
+    routeNumbers: summary['nlb-route.json']?.routeNumbers || 0,
+    stations: Number(stopSearchIndex.stats?.nlbStations || 0)
   },
   gmb: {
     routeNumbers: ['HKI', 'KLN', 'NT'].reduce((sum, region) => sum + (summary[`gmb-route-${region}.json`]?.routeNumbers || 0), 0),
@@ -812,6 +830,7 @@ await writeFile('data/transport-meta.json', JSON.stringify({
   strategies: {
     kmbRouteStop: 'lazy-per-route',
     citybusRouteStop: 'lazy-per-route-browser-daily-cache',
+    nlbRouteStop: 'lazy-per-route-browser-daily-cache',
     gmbRouteDetail: 'lazy-per-route',
     stopSearch: 'daily-gtfs-reverse-index',
     fares: 'daily-compact-gtfs-fare-index',

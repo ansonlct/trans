@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '6.7.6';
+const APP_VERSION = '6.7.7';
 
 function renderAppVersion() {
     const el = document.getElementById('app-version-value');
@@ -84,6 +84,7 @@ function setSettingsCacheView(showCache) {
     const CACHE_OPERATOR_DATASETS = {
         kmb: ['kmb-route.json', 'kmb-stop.json'],
         citybus: ['ctb-route.json'],
+        nlb: ['nlb-route.json'],
         gmb: ['gmb-route-HKI.json', 'gmb-route-KLN.json', 'gmb-route-NT.json']
     };
 
@@ -113,9 +114,10 @@ function setSettingsCacheView(showCache) {
     }
 
     function getLocalCachedStationCounts() {
-        const result = { citybus: 0, gmb: 0 };
+        const result = { citybus: 0, nlb: 0, gmb: 0 };
         const citybusStops = new Set();
         const gmbStops = new Set();
+        const nlbStops = new Set();
         const prefix = 'psk_transport_static_json_v1::';
         try {
             for (let i = 0; i < localStorage.length; i++) {
@@ -125,7 +127,8 @@ function setSettingsCacheView(showCache) {
                 try { url = decodeURIComponent(key.slice(prefix.length)); } catch (e) { continue; }
                 const isCitybusRouteStop = /rt\.data\.gov\.hk\/v2\/transport\/citybus\/route-stop\/CTB\//i.test(url);
                 const isGmbRouteStop = /data\.etagmb\.gov\.hk\/route-stop\//i.test(url);
-                if (!isCitybusRouteStop && !isGmbRouteStop) continue;
+                const isNlbRouteStop = /rt\.data\.gov\.hk\/v2\/transport\/nlb\/stop\.php\?action=list/i.test(url);
+                if (!isCitybusRouteStop && !isGmbRouteStop && !isNlbRouteStop) continue;
                 const raw = localStorage.getItem(key);
                 if (!raw) continue;
                 let stored;
@@ -137,6 +140,12 @@ function setSettingsCacheView(showCache) {
                     rows.forEach(item => {
                         const stopId = item && (item.stop || item.stop_id || item.id);
                         if (stopId) citybusStops.add(String(stopId));
+                    });
+                } else if (isNlbRouteStop) {
+                    const rows = payload && Array.isArray(payload.stops) ? payload.stops : [];
+                    rows.forEach(item => {
+                        const stopId = item && (item.stopId || item.stop_id || item.id);
+                        if (stopId) nlbStops.add(String(stopId));
                     });
                 } else {
                     const rows = payload && payload.data && Array.isArray(payload.data.route_stops)
@@ -152,6 +161,7 @@ function setSettingsCacheView(showCache) {
             console.warn('Unable to count locally cached stations', e);
         }
         result.citybus = citybusStops.size;
+        result.nlb = nlbStops.size;
         result.gmb = gmbStops.size;
         return result;
     }
@@ -165,6 +175,7 @@ function setSettingsCacheView(showCache) {
         if (!Number.isFinite(routeNumbers)) {
             if (operator === 'kmb') routeNumbers = Number(datasets['kmb-route.json'] && datasets['kmb-route.json'].routeNumbers);
             if (operator === 'citybus') routeNumbers = Number(datasets['ctb-route.json'] && datasets['ctb-route.json'].routeNumbers);
+            if (operator === 'nlb') routeNumbers = Number(datasets['nlb-route.json'] && datasets['nlb-route.json'].routeNumbers);
             if (operator === 'gmb') {
                 routeNumbers = ['HKI', 'KLN', 'NT'].reduce((sum, region) => {
                     const item = datasets[`gmb-route-${region}.json`];
@@ -181,6 +192,7 @@ function setSettingsCacheView(showCache) {
         if (!Number.isFinite(routeNumbers) || routeNumbers <= 0) {
             if (operator === 'kmb') routeNumbers = Number(datasets['kmb-route.json'] && datasets['kmb-route.json'].records) || 0;
             if (operator === 'citybus') routeNumbers = Number(datasets['ctb-route.json'] && datasets['ctb-route.json'].records) || 0;
+            if (operator === 'nlb') routeNumbers = Number(datasets['nlb-route.json'] && datasets['nlb-route.json'].records) || 0;
             if (operator === 'gmb') {
                 routeNumbers = ['HKI', 'KLN', 'NT'].reduce((sum, region) => sum + (Number(datasets[`gmb-route-${region}.json`] && datasets[`gmb-route-${region}.json`].records) || 0), 0);
             }
@@ -192,6 +204,7 @@ function setSettingsCacheView(showCache) {
 
         const localStations = getLocalCachedStationCounts();
         if (operator === 'citybus') stations = Math.max(stations, localStations.citybus);
+        if (operator === 'nlb') stations = Math.max(stations, localStations.nlb);
         if (operator === 'gmb') stations = Math.max(stations, localStations.gmb);
         return { routeNumbers: Math.max(0, routeNumbers || 0), stations: Math.max(0, stations || 0) };
     }
@@ -213,7 +226,7 @@ function setSettingsCacheView(showCache) {
     }
 
     function setAllCacheIndicatorsFailed(message) {
-        ['kmb', 'citybus', 'gmb'].forEach(operator => {
+        ['kmb', 'citybus', 'nlb', 'gmb'].forEach(operator => {
             setCacheIndicator(operator, { status: 'fail', fresh: 0, available: 0, total: CACHE_OPERATOR_DATASETS[operator].length }, false, null);
         });
         const updatedEl = document.getElementById('cache-status-updated');
@@ -233,7 +246,7 @@ function setSettingsCacheView(showCache) {
     async function refreshCacheIndicators(force = false) {
         const updatedEl = document.getElementById('cache-status-updated');
         if (updatedEl) updatedEl.textContent = '最後更新：檢查中…';
-        ['kmb', 'citybus', 'gmb'].forEach(operator => {
+        ['kmb', 'citybus', 'nlb', 'gmb'].forEach(operator => {
             const row = document.getElementById(`cache-status-${operator}`);
             if (!row) return;
             const dot = row.querySelector('.cache-status-dot');
@@ -252,7 +265,7 @@ function setSettingsCacheView(showCache) {
             const metaServiceDay = meta.serviceDay || (meta.updatedAt ? getHongKongServiceDayKey(6, new Date(meta.updatedAt).getTime()) : '');
             const isStaleServiceDay = !metaServiceDay || metaServiceDay !== currentServiceDay;
 
-            ['kmb', 'citybus', 'gmb'].forEach(operator => {
+            ['kmb', 'citybus', 'nlb', 'gmb'].forEach(operator => {
                 setCacheIndicator(operator, computeCacheOperatorStatus(meta, operator), isStaleServiceDay, getCacheLoadedCounts(meta, operator));
             });
 
@@ -415,6 +428,7 @@ function setSettingsCacheView(showCache) {
         ['https://data.etabus.gov.hk/v1/transport/kmb/route/', './data/kmb-route.json'],
         ['https://data.etabus.gov.hk/v1/transport/kmb/route', './data/kmb-route.json'],
         ['https://rt.data.gov.hk/v2/transport/citybus/route/CTB', './data/ctb-route.json'],
+        ['https://rt.data.gov.hk/v2/transport/nlb/route.php?action=list', './data/nlb-route.json'],
         ['https://data.etagmb.gov.hk/route/HKI', './data/gmb-route-HKI.json'],
         ['https://data.etagmb.gov.hk/route/KLN', './data/gmb-route-KLN.json'],
         ['https://data.etagmb.gov.hk/route/NT', './data/gmb-route-NT.json']
@@ -467,7 +481,8 @@ function setSettingsCacheView(showCache) {
         // Citybus/KMB route opened once on a device does not need to refetch its
         // stop sequence/details again during the cache TTL.
         return /\/route(?:-stop)?(?:\/|$)/i.test(u) ||
-               /rt\.data\.gov\.hk\/v2\/transport\/citybus\/stop\/[^/?]+/i.test(u);
+               /rt\.data\.gov\.hk\/v2\/transport\/citybus\/stop\/[^/?]+/i.test(u) ||
+               /rt\.data\.gov\.hk\/v2\/transport\/nlb\/stop\.php\?action=list/i.test(u);
     }
 
     async function fetchJsonCached(url, { ttl = 0, timeout = 8000 } = {}) {
@@ -870,7 +885,7 @@ function setSettingsCacheView(showCache) {
 
     function invalidateLiveTransportMemoryCache() {
         for (const key of window.apiJsonCache.keys()) {
-            if (/\/eta(?:\/|$)|\/route-eta\/|\/eta\/route-stop\/|getSchedule\.php/i.test(String(key))) {
+            if (/\/eta(?:\/|$)|\/route-eta\/|\/eta\/route-stop\/|estimatedArrivals|getSchedule\.php/i.test(String(key))) {
                 window.apiJsonCache.delete(key);
             }
         }
@@ -1312,7 +1327,7 @@ function setSettingsCacheView(showCache) {
     window.tab4Loaded = false;
     window.tab4SearchText = '';
     window.tab4OperatorFilter = 'KMB';
-    window.tab4SourceStatus = { kmb: false, ctb: false, gmb: false };
+    window.tab4SourceStatus = { kmb: false, ctb: false, nlb: false, gmb: false };
     window.tab4StopSearchIndex = null;
     window.tab4StopSearchIndexLoading = null;
     window.tab4StopSearchQueryCache = new Map();
@@ -1333,7 +1348,7 @@ function setSettingsCacheView(showCache) {
     // Tab 4 本機快取：先顯示舊資料，再背景更新。
     // 只快取靜態路線/方向資料；ETA 到站時間仍然即時讀取。
     // ==========================================
-    const TAB4_ROUTE_CACHE_KEY = 'psk_transport_tab4_route_groups_v3';
+    const TAB4_ROUTE_CACHE_KEY = 'psk_transport_tab4_route_groups_v4';
     const TAB4_ROUTE_CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
 
     function safeLocalStorageGet(key) {
@@ -1399,8 +1414,9 @@ function setSettingsCacheView(showCache) {
         return routeFareIndexPromise;
     }
 
-    function getFareOperatorCode({ isCitybus, isGmb }) {
+    function getFareOperatorCode({ isCitybus, isGmb, isNlb }) {
         if (isGmb) return 'GMB';
+        if (isNlb) return 'NLB';
         if (isCitybus) return 'CTB';
         return 'KMB';
     }
@@ -1411,11 +1427,11 @@ function setSettingsCacheView(showCache) {
     }
 
     function chooseFareRoute(index, {
-        route, bound, dest, isCitybus, isGmb, gmbRouteId, gmbRouteSeq, stopCount, requiredSeq
+        route, bound, dest, isCitybus, isGmb, isNlb, gmbRouteId, gmbRouteSeq, stopCount, requiredSeq
     }) {
         if (!index || !index.routes) return null;
         const routeCode = String(route || '').trim().toUpperCase();
-        const operator = getFareOperatorCode({ isCitybus, isGmb });
+        const operator = getFareOperatorCode({ isCitybus, isGmb, isNlb });
         const expectedBoundNo = getFareBoundNumber({ bound, isGmb, gmbRouteSeq });
         const boundCandidates = expectedBoundNo === '2' ? ['2', '1'] : ['1', '2'];
         let routeIds = [];
@@ -1561,11 +1577,11 @@ function setSettingsCacheView(showCache) {
     }
 
     function chooseTimetableRoute(index, {
-        route, bound, dest, isCitybus, isGmb, gmbRouteId, gmbRouteSeq, stopCount
+        route, bound, dest, isCitybus, isGmb, isNlb, gmbRouteId, gmbRouteSeq, stopCount
     }) {
         if (!index || !index.routes) return null;
         const routeCode = String(route || '').trim().toUpperCase();
-        const operator = getFareOperatorCode({ isCitybus, isGmb });
+        const operator = getFareOperatorCode({ isCitybus, isGmb, isNlb });
         const expectedBoundNo = getFareBoundNumber({ bound, isGmb, gmbRouteSeq });
         const boundCandidates = expectedBoundNo === '2' ? ['2', '1'] : ['1', '2'];
         let routeIds = [];
@@ -1606,13 +1622,12 @@ function setSettingsCacheView(showCache) {
         return best;
     }
 
-    async function getRouteTimetable(params) {
+    async function getRouteTimetable(params, dayKey = getHongKongServiceDayKey(6)) {
         const index = await loadRouteTimetableIndex();
-        if (!index) return { unavailable: true };
+        if (!index) return { unavailable: true, dayKey };
         const chosen = chooseTimetableRoute(index, params || {});
-        if (!chosen || !chosen.dir || !chosen.dir.s) return { notFound: true, index };
+        if (!chosen || !chosen.dir || !chosen.dir.s) return { notFound: true, index, dayKey };
 
-        const dayKey = getHongKongServiceDayKey(6);
         const fixed = new Set();
         const ranges = new Map();
         const activeServices = [];
@@ -1641,6 +1656,17 @@ function setSettingsCacheView(showCache) {
             boundNo: chosen.boundNo,
             sourceUpdatedAt: index.updatedAt || ''
         };
+    }
+
+    function addTimetableServiceDays(dayKey, offset) {
+        const date = new Date(`${dayKey}T12:00:00+08:00`);
+        date.setUTCDate(date.getUTCDate() + Number(offset || 0));
+        return date.toISOString().slice(0, 10);
+    }
+
+    function getTimetableSevenDayKeys() {
+        const first = getHongKongServiceDayKey(6);
+        return Array.from({ length: 7 }, (_, i) => addTimetableServiceDays(first, i));
     }
 
     function formatTimetableServiceDate(dayKey) {
@@ -1682,44 +1708,123 @@ function setSettingsCacheView(showCache) {
         timetableReturnFocus = null;
     }
 
-    async function showRouteTimetable() {
-        const ctx = window.tab4DetailContext;
-        if (!ctx || !openTimetableModalShell(ctx)) return;
+    function renderTimetableDayBlock(data, dayIndex) {
+        const todayClass = dayIndex === 0 ? ' timetable-day-card-today' : '';
+        let html = `<section class="timetable-day-card${todayClass}"><div class="timetable-date"><strong>${escapeHtml(formatTimetableServiceDate(data.dayKey))}</strong><span>${dayIndex === 0 ? '今日 · ' : ''}總站開出</span></div>`;
+        if (!data.times.length && !data.frequencyRanges.length) {
+            html += '<div class="timetable-day-empty">當日沒有公布班次。</div>';
+        } else {
+            if (data.times.length) {
+                html += '<div class="timetable-section"><h3>固定開出時間</h3><div class="timetable-time-grid">';
+                data.times.forEach(time => { html += `<div class="timetable-time-chip">${formatTimetableClock(time)}</div>`; });
+                html += '</div></div>';
+            }
+            if (data.frequencyRanges.length) {
+                html += '<div class="timetable-section"><h3>班次頻率</h3><div class="timetable-frequency-list">';
+                data.frequencyRanges.forEach(([start, end, headway]) => {
+                    html += `<div class="timetable-frequency-row"><span class="timetable-frequency-time">${formatTimetableClock(start)}–${formatTimetableClock(end)}</span><span>${escapeHtml(formatTimetableHeadway(headway))}</span></div>`;
+                });
+                html += '</div></div>';
+            }
+        }
+        html += '</section>';
+        return html;
+    }
+
+    async function showRouteTimetableForContext(ctx) {
+        if (!ctx || !ctx.route || !openTimetableModalShell(ctx)) return;
         const content = document.getElementById('timetable-content');
         try {
-            const data = await getRouteTimetable(ctx);
+            const dayKeys = getTimetableSevenDayKeys();
+            const results = await Promise.all(dayKeys.map(dayKey => getRouteTimetable(ctx, dayKey)));
             if (!content || !document.getElementById('timetable-modal')?.classList.contains('open')) return;
-            if (data.unavailable) {
+            if (results.every(data => data.unavailable)) {
                 content.innerHTML = '<div class="timetable-empty">時間表資料尚未建立。<br><span>部署後請執行一次每日交通資料更新。</span></div>';
                 return;
             }
-            if (data.notFound) {
+            if (results.every(data => data.notFound)) {
                 content.innerHTML = '<div class="timetable-empty">未能配對此方向的官方時間表。</div>';
                 return;
             }
 
-            let html = `<div class="timetable-date">服務日：${escapeHtml(formatTimetableServiceDate(data.dayKey))}<span>總站開出</span></div>`;
-            if (!data.times.length && !data.frequencyRanges.length) {
-                html += '<div class="timetable-empty">今日沒有公布的總站開出班次。</div>';
-            } else {
-                if (data.times.length) {
-                    html += '<section class="timetable-section"><h3>固定開出時間</h3><div class="timetable-time-grid">';
-                    data.times.forEach(time => { html += `<div class="timetable-time-chip">${formatTimetableClock(time)}</div>`; });
-                    html += '</div></section>';
+            let html = '<div class="timetable-week-intro">未來 7 個服務日 · 總站公布開出時間</div>';
+            results.forEach((data, idx) => {
+                if (data.unavailable || data.notFound) {
+                    html += `<section class="timetable-day-card"><div class="timetable-date"><strong>${escapeHtml(formatTimetableServiceDate(dayKeys[idx]))}</strong><span>總站開出</span></div><div class="timetable-day-empty">未能取得此日時間表。</div></section>`;
+                } else {
+                    html += renderTimetableDayBlock(data, idx);
                 }
-                if (data.frequencyRanges.length) {
-                    html += '<section class="timetable-section"><h3>班次頻率</h3><div class="timetable-frequency-list">';
-                    data.frequencyRanges.forEach(([start, end, headway]) => {
-                        html += `<div class="timetable-frequency-row"><span class="timetable-frequency-time">${formatTimetableClock(start)}–${formatTimetableClock(end)}</span><span>${escapeHtml(formatTimetableHeadway(headway))}</span></div>`;
-                    });
-                    html += '</div></section>';
-                }
-            }
-            html += '<div class="timetable-note">資料為運輸署公布時間表；實際開車時間可能因交通或營運調動而有差異。凌晨 06:00 前會按前一服務日顯示，以配合跨午夜的 24:xx／25:xx 班次。</div>';
+            });
+            html += '<div class="timetable-note">資料為運輸署公布時間表；實際開車時間可能因交通或營運調動而有差異。凌晨 06:00 前以前一服務日為第一日，以配合跨午夜 24:xx／25:xx 班次。</div>';
             content.innerHTML = html;
         } catch (err) {
             console.warn('Show route timetable failed', err);
             if (content) content.innerHTML = '<div class="timetable-empty">暫時無法載入時間表，請稍後再試。</div>';
+        }
+    }
+
+    async function showRouteTimetable() {
+        return showRouteTimetableForContext(window.tab4DetailContext);
+    }
+
+    async function showQuickKmbTimetable(route, dest = '') {
+        const routeCode = String(route || '').trim();
+        if (!routeCode) return;
+        const bound = 'outbound';
+        let stopCount = 0;
+        try {
+            const stops = await getRouteStopsCached(routeCode, bound, false);
+            stopCount = (stops || []).length;
+        } catch (e) {}
+        return showRouteTimetableForContext({ route: routeCode, bound, dest, isCitybus: false, isGmb: false, isNlb: false, stopCount });
+    }
+
+    async function showQuickGmbTimetable(routeCode) {
+        const cfg = GMB_CONFIGS[String(routeCode || '').toUpperCase()];
+        if (!cfg) return;
+        try {
+            const resolved = await resolveGmbRouteStop(cfg);
+            const stops = await getGmbRouteStopsForDetail(resolved.routeId, resolved.routeSeq);
+            return showRouteTimetableForContext({
+                route: cfg.routeCode,
+                bound: String(resolved.routeSeq) === '2' ? 'inbound' : 'outbound',
+                dest: resolved.destName || cfg.displayDest,
+                isCitybus: false,
+                isGmb: true,
+                isNlb: false,
+                gmbRegion: cfg.region,
+                gmbRouteId: resolved.routeId,
+                gmbRouteSeq: resolved.routeSeq,
+                stopCount: (stops || []).length
+            });
+        } catch (err) {
+            const shellCtx = { route: cfg.routeCode, dest: cfg.displayDest };
+            if (openTimetableModalShell(shellCtx)) {
+                const content = document.getElementById('timetable-content');
+                if (content) content.innerHTML = '<div class="timetable-empty">暫時無法配對此小巴方向的時間表。</div>';
+            }
+        }
+    }
+
+    function showFavoriteTimetableFromEncoded(encoded) {
+        try {
+            const fav = normalizeFavoriteStop(JSON.parse(decodeURIComponent(encoded)));
+            return showRouteTimetableForContext({
+                route: fav.route,
+                bound: fav.bound,
+                dest: fav.dest,
+                isCitybus: fav.isCitybus,
+                isGmb: fav.isGmb,
+                isNlb: fav.isNlb,
+                gmbRegion: fav.gmbRegion,
+                gmbRouteId: fav.gmbRouteId,
+                gmbRouteSeq: fav.gmbRouteSeq,
+                nlbRouteId: fav.nlbRouteId,
+                nlbPairKey: fav.nlbPairKey,
+                stopCount: Number(fav.routeStopCount || 0)
+            });
+        } catch (err) {
+            console.warn('Favorite timetable payload invalid', err);
         }
     }
 
@@ -1746,6 +1851,10 @@ function setSettingsCacheView(showCache) {
             stopName: String(fav.stopName || fav.name_tc || fav.stopId || '').trim(),
             isCitybus: !!fav.isCitybus,
             isGmb: !!fav.isGmb,
+            isNlb: !!fav.isNlb,
+            nlbRouteId: String(fav.nlbRouteId || '').trim(),
+            nlbPairKey: String(fav.nlbPairKey || '').trim(),
+            routeStopCount: Number(fav.routeStopCount || 0),
             gmbRegion: String(fav.gmbRegion || '').trim(),
             gmbRouteId: String(fav.gmbRouteId || fav.routeId || '').trim(),
             gmbRouteSeq: String(fav.gmbRouteSeq || fav.routeSeq || '').trim(),
@@ -1758,11 +1867,12 @@ function setSettingsCacheView(showCache) {
     }
 
     function makeFavoriteStopKey(fav) {
-        const op = fav.isGmb ? 'GMB' : (fav.isCitybus ? 'CTB' : 'KMB');
+        const op = fav.isGmb ? 'GMB' : (fav.isNlb ? 'NLB' : (fav.isCitybus ? 'CTB' : 'KMB'));
         const routeCode = String(fav.route || fav.routeDisplay || '').trim().toUpperCase();
         const boundCode = getFavoriteBoundCode(fav.boundCode || fav.bound);
         const gmbPart = fav.isGmb ? `${fav.gmbRegion || ''}:${fav.gmbRouteId || ''}:${fav.gmbRouteSeq || ''}` : '';
-        return [op, routeCode, boundCode, gmbPart, String(fav.seq || ''), String(fav.stopId || '')].join('|');
+        const nlbPart = fav.isNlb ? `${fav.nlbRouteId || ''}:${fav.nlbPairKey || ''}` : '';
+        return [op, routeCode, boundCode, gmbPart || nlbPart, String(fav.seq || ''), String(fav.stopId || '')].join('|');
     }
 
     function getFavoriteStops() {
@@ -1797,11 +1907,12 @@ function setSettingsCacheView(showCache) {
         return encodeURIComponent(JSON.stringify(normalizeFavoriteStop(fav)));
     }
 
-    function makeFavoriteStopPayload({ route, routeDisplay, bound, dest, isCitybus, isGmb, gmbRegion, gmbRouteId, gmbRouteSeq, seq, stopId, stopName, badgeColor, fare }) {
+    function makeFavoriteStopPayload({ route, routeDisplay, bound, dest, isCitybus, isGmb, isNlb, nlbRouteId, nlbPairKey, routeStopCount, gmbRegion, gmbRouteId, gmbRouteSeq, seq, stopId, stopName, badgeColor, fare }) {
         let operatorLabel = '九巴';
         if (isCitybus) operatorLabel = '城巴';
         if (isGmb) operatorLabel = '專線小巴';
-        if (!isCitybus && !isGmb && /^N?A/i.test(String(routeDisplay || route || ''))) operatorLabel = '龍運';
+        if (isNlb) operatorLabel = '大嶼山巴士';
+        if (!isCitybus && !isGmb && !isNlb && /^N?A/i.test(String(routeDisplay || route || ''))) operatorLabel = '龍運';
 
         return normalizeFavoriteStop({
             route,
@@ -1813,6 +1924,10 @@ function setSettingsCacheView(showCache) {
             stopName,
             isCitybus,
             isGmb,
+            isNlb,
+            nlbRouteId,
+            nlbPairKey,
+            routeStopCount,
             gmbRegion,
             gmbRouteId,
             gmbRouteSeq,
@@ -1871,6 +1986,7 @@ function setSettingsCacheView(showCache) {
 
     function getFavoriteHeaderClass(fav) {
         if (fav.isGmb) return 'gmb-header';
+        if (fav.isNlb) return 'nlb-header';
         if (fav.isCitybus) return 'ctb-header';
         return 'kmb-header';
     }
@@ -1898,6 +2014,7 @@ function setSettingsCacheView(showCache) {
             dest: normalized.dest,
             isCitybus: normalized.isCitybus,
             isGmb: normalized.isGmb,
+            isNlb: normalized.isNlb,
             gmbRouteId: normalized.gmbRouteId,
             gmbRouteSeq: normalized.gmbRouteSeq,
             requiredSeq: normalized.seq
@@ -1956,6 +2073,11 @@ function setSettingsCacheView(showCache) {
             return fetchGmbEtaForStop(normalized.gmbRouteId, normalized.gmbRouteSeq, normalized.seq);
         }
 
+        if (normalized.isNlb) {
+            if (!normalized.nlbRouteId || !normalized.stopId) return [];
+            return fetchNlbEtaForStop(normalized.nlbRouteId, normalized.stopId);
+        }
+
         if (normalized.isCitybus) {
             const etaObj = await fetchJsonCached(`https://rt.data.gov.hk/v2/transport/citybus/eta/CTB/${encodeURIComponent(normalized.stopId)}/${encodeURIComponent(normalized.route)}`, { ttl: 12000, timeout: 5000 });
             return ((etaObj && etaObj.data) || [])
@@ -2004,7 +2126,7 @@ function setSettingsCacheView(showCache) {
             <div class="card favorite-card" data-favorite-key="${escapeHtml(fav.key)}">
                 <div class="card-header ${getFavoriteHeaderClass(fav)}">
                     <span class="icon">${getFavoriteIcon(fav)}</span>
-                    <span class="card-title">${escapeHtml(fav.routeDisplay || fav.route)}</span>
+                    <span class="card-title timetable-link" onclick="showFavoriteTimetableFromEncoded('${encodeFavoriteStopPayload(fav)}')" title="查看一星期時間表">${escapeHtml(fav.routeDisplay || fav.route)}</span>
                     <span class="favorite-route-meta">${escapeHtml(fav.operatorLabel || '')}</span>
                     ${renderFavoriteStarButton(fav)}
                 </div>
@@ -2031,7 +2153,7 @@ function setSettingsCacheView(showCache) {
             if (Date.now() - Number(cached.time || 0) > TAB4_ROUTE_CACHE_TTL) return false;
 
             window.allRoutesGroupsTab4 = cached.groups;
-            window.tab4SourceStatus = cached.sourceStatus || { kmb: true, ctb: true, gmb: true };
+            window.tab4SourceStatus = cached.sourceStatus || { kmb: true, ctb: true, nlb: false, gmb: true };
             window.gmbDirectionsLoadedKeys = cached.gmbDirectionsLoadedKeys || {};
             window.tab4Loaded = true;
             return Object.keys(window.allRoutesGroupsTab4).length > 0;
@@ -2328,6 +2450,122 @@ function setSettingsCacheView(showCache) {
         return directionsOut;
     }
 
+    function parseNlbRouteName(value) {
+        const raw = String(value || '').trim();
+        const parts = raw.split(/\s*(?:>|＞|→)\s*/).map(v => v.trim()).filter(Boolean);
+        return { orig: parts[0] || '', dest: parts.slice(1).join(' > ') || '' };
+    }
+
+    function normalizeNlbTerminalName(value) {
+        return normalizeFareMatchText(String(value || '').replace(/[（(][^）)]*[）)]/g, ''));
+    }
+
+    function mergeNlbRoutesIntoTab4(payload) {
+        const list = payload && Array.isArray(payload.routes) ? payload.routes : [];
+        const byRoute = new Map();
+        list.forEach(item => {
+            const routeNo = String(item && item.routeNo || '').trim().toUpperCase();
+            if (!routeNo || !item || !item.routeId) return;
+            if (!byRoute.has(routeNo)) byRoute.set(routeNo, []);
+            const names = parseNlbRouteName(item.routeName_c || item.routeName_e || '');
+            byRoute.get(routeNo).push({ ...item, routeNo, ...names });
+        });
+
+        let groupsAdded = 0;
+        for (const [routeNo, variants] of byRoute) {
+            const unused = new Set(variants.map((_, i) => i));
+            variants.forEach((item, idx) => {
+                if (!unused.has(idx)) return;
+                unused.delete(idx);
+                const aOrig = normalizeNlbTerminalName(item.orig);
+                const aDest = normalizeNlbTerminalName(item.dest);
+                let reverseIdx = -1;
+                for (const candidateIdx of unused) {
+                    const candidate = variants[candidateIdx];
+                    if (aOrig && aDest && normalizeNlbTerminalName(candidate.orig) === aDest && normalizeNlbTerminalName(candidate.dest) === aOrig) {
+                        reverseIdx = candidateIdx;
+                        break;
+                    }
+                }
+                const pair = [item];
+                if (reverseIdx >= 0) {
+                    pair.push(variants[reverseIdx]);
+                    unused.delete(reverseIdx);
+                }
+                const groupKey = `NLB-${routeNo}-${item.routeId}`;
+                window.allRoutesGroupsTab4[groupKey] = pair.map((variant, dirIdx) => ({
+                    route: routeNo,
+                    displayRoute: routeNo,
+                    bound: dirIdx === 0 ? 'O' : 'I',
+                    orig_tc: variant.orig || '',
+                    dest_tc: variant.dest || variant.routeName_c || '詳情',
+                    isCitybus: false,
+                    isGmb: false,
+                    isNlb: true,
+                    nlbRouteId: String(variant.routeId),
+                    nlbPairKey: groupKey,
+                    overnightRoute: Number(variant.overnightRoute || 0),
+                    specialRoute: Number(variant.specialRoute || 0),
+                    operatorName: '大嶼山巴士'
+                }));
+                groupsAdded++;
+            });
+        }
+        return groupsAdded;
+    }
+
+    async function loadNlbRoutesForTab4() {
+        const payload = await fetchJsonCached('https://rt.data.gov.hk/v2/transport/nlb/route.php?action=list', { ttl: 3600000, timeout: 12000 });
+        return mergeNlbRoutesIntoTab4(payload);
+    }
+
+    async function getNlbRouteStopsForDetail(routeId) {
+        const url = `https://rt.data.gov.hk/v2/transport/nlb/stop.php?action=list&routeId=${encodeURIComponent(routeId)}`;
+        const payload = await fetchJsonCached(url, { ttl: 86400000, timeout: 10000 });
+        const rows = payload && Array.isArray(payload.stops) ? payload.stops : [];
+        return rows.map((item, idx) => ({
+            seq: String(idx + 1),
+            stop: String(item.stopId || item.stop_id || idx + 1),
+            name_tc: String(item.stopName_c || item.stopName_tc || item.stopName_s || item.stopName_e || item.stopId || ''),
+            fare: normalizeFareNumber(item.fare),
+            fareHoliday: normalizeFareNumber(item.fareHoliday)
+        }));
+    }
+
+    function isHongKongSunday() {
+        try {
+            return new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Hong_Kong', weekday: 'short' }).format(new Date()) === 'Sun';
+        } catch (e) {
+            return new Date(Date.now() + 8 * 3600000).getUTCDay() === 0;
+        }
+    }
+
+    function getNlbFareMapFromStops(stops) {
+        const holidayStyle = isHongKongSunday();
+        const map = {};
+        (stops || []).forEach(stop => {
+            const value = holidayStyle && normalizeFareNumber(stop.fareHoliday) !== null ? stop.fareHoliday : stop.fare;
+            if (normalizeFareNumber(value) !== null) map[String(stop.seq)] = normalizeFareNumber(value);
+        });
+        return map;
+    }
+
+    function extractNlbEtaRows(payload) {
+        if (!payload || typeof payload !== 'object') return [];
+        if (Array.isArray(payload.estimatedArrivals)) return payload.estimatedArrivals;
+        if (payload.data && Array.isArray(payload.data.estimatedArrivals)) return payload.data.estimatedArrivals;
+        if (Array.isArray(payload.data)) return payload.data;
+        return [];
+    }
+
+    async function fetchNlbEtaForStop(routeId, stopId) {
+        const url = `https://rt.data.gov.hk/v2/transport/nlb/stop.php?action=estimatedArrivals&routeId=${encodeURIComponent(routeId)}&stopId=${encodeURIComponent(stopId)}&language=zh`;
+        const payload = await fetchJsonCached(url, { ttl: 12000, timeout: 6000 });
+        return extractNlbEtaRows(payload)
+            .map(item => item && (item.estimatedArrivalTime || item.eta || item.timestamp))
+            .filter(Boolean);
+    }
+
     async function enrichGmbDirectionsWithTerminalStopNames(directions) {
         const dirs = (directions || []).map(dir => ({ ...dir }));
         await mapWithConcurrency(dirs, 4, async dir => {
@@ -2399,14 +2637,11 @@ function setSettingsCacheView(showCache) {
         return updatedKeys;
     }
 
-    // 非同步進度條控制器
+    // 非同步狀態計數器。v6.7.7 起取消巴士／小巴查詢頁的藍色橫向 loading bar。
     window.tab4ActiveFetches = 0;
     function setTab4Loading(isActive) {
         if (isActive) window.tab4ActiveFetches++;
         else window.tab4ActiveFetches = Math.max(0, window.tab4ActiveFetches - 1);
-        
-        const p = document.getElementById('tab4-progress-container');
-        if (p) p.style.display = window.tab4ActiveFetches > 0 ? 'block' : 'none';
     }
 
     function updateTab4SourceStatus() {
@@ -2415,14 +2650,16 @@ function setSettingsCacheView(showCache) {
         const missing = [];
         if (!window.tab4SourceStatus.kmb) missing.push('九巴');
         if (!window.tab4SourceStatus.ctb) missing.push('城巴');
+        if (!window.tab4SourceStatus.nlb) missing.push('嶼巴');
         if (!window.tab4SourceStatus.gmb) missing.push('小巴');
-        if (missing.length === 0 || missing.length === 3) el.innerText = '';
+        if (missing.length === 0 || missing.length === 4) el.innerText = '';
         else el.innerText = `${missing.join('、')}暫未載入${location.protocol === 'file:' ? '，建議用本地伺服器開啟' : ''}`;
     }
 
     function getTab4DirsByOperator(dirs) {
-        if (window.tab4OperatorFilter === 'KMB') return (dirs || []).filter(d => !d.isCitybus && !d.isGmb);
-        if (window.tab4OperatorFilter === 'CTB') return (dirs || []).filter(d => d.isCitybus && !d.isGmb);
+        if (window.tab4OperatorFilter === 'KMB') return (dirs || []).filter(d => !d.isCitybus && !d.isGmb && !d.isNlb);
+        if (window.tab4OperatorFilter === 'CTB') return (dirs || []).filter(d => d.isCitybus && !d.isGmb && !d.isNlb);
+        if (window.tab4OperatorFilter === 'NLB') return (dirs || []).filter(d => d.isNlb);
         if (window.tab4OperatorFilter === 'GMB') return (dirs || []).filter(d => d.isGmb);
         return dirs || [];
     }
@@ -2653,13 +2890,14 @@ function setSettingsCacheView(showCache) {
 
         const freshGroups = {};
         window.allRoutesGroupsTab4 = freshGroups;
-        window.tab4SourceStatus = { kmb: false, ctb: false, gmb: false };
+        window.tab4SourceStatus = { kmb: false, ctb: false, nlb: false, gmb: false };
         window.gmbDirectionsLoadedKeys = {};
 
         try {
-            const [kmbResult, ctbResult, gmbResult] = await Promise.allSettled([
+            const [kmbResult, ctbResult, nlbResult, gmbResult] = await Promise.allSettled([
                 fetchJsonCached('https://data.etabus.gov.hk/v1/transport/kmb/route/', { ttl: 3600000, timeout: 12000 }),
                 fetchJsonCached('https://rt.data.gov.hk/v2/transport/citybus/route/CTB', { ttl: 3600000, timeout: 12000 }),
+                loadNlbRoutesForTab4(),
                 loadGmbRoutesForTab4()
             ]);
 
@@ -2690,6 +2928,13 @@ function setSettingsCacheView(showCache) {
                         window.allRoutesGroupsTab4[r.route].push({ route: r.route, displayRoute: r.route, bound: 'I', orig_tc: r.dest_tc, dest_tc: r.orig_tc, isCitybus: true, isGmb: false });
                     }
                 });
+            }
+
+            if (nlbResult.status === 'fulfilled' && Number(nlbResult.value) > 0) {
+                window.tab4SourceStatus.nlb = true;
+                loadedAnySource = true;
+            } else {
+                console.warn('NLB route list failed', nlbResult.reason || nlbResult.value);
             }
 
             if (gmbResult.status === 'fulfilled' && gmbResult.value) {
@@ -2734,10 +2979,11 @@ function setSettingsCacheView(showCache) {
         if (target) target.innerHTML = '';
         
         try {
-            const [kmbResult, ctbResult, gmbResult] = await Promise.allSettled([
+            const [kmbResult, ctbResult, nlbResult, gmbResult] = await Promise.allSettled([
                 fetchJsonCached('https://data.etabus.gov.hk/v1/transport/kmb/route/', { ttl: 3600000, timeout: 12000 }),
                 // Citybus V1/V1.1 已停止支援；使用 V2 endpoint，避免整個巴士查詢因城巴 API 失敗而中斷。
                 fetchJsonCached('https://rt.data.gov.hk/v2/transport/citybus/route/CTB', { ttl: 3600000, timeout: 12000 }),
+                loadNlbRoutesForTab4(),
                 loadGmbRoutesForTab4()
             ]);
 
@@ -2774,6 +3020,13 @@ function setSettingsCacheView(showCache) {
                 console.warn('Citybus route list failed', ctbResult.reason || ctbResult.value);
             }
 
+            if (nlbResult.status === 'fulfilled' && Number(nlbResult.value) > 0) {
+                window.tab4SourceStatus.nlb = true;
+                loadedAnySource = true;
+            } else {
+                console.warn('NLB route list failed', nlbResult.reason || nlbResult.value);
+            }
+
             if (gmbResult.status === 'fulfilled' && gmbResult.value) {
                 window.tab4SourceStatus.gmb = true;
                 loadedAnySource = true;
@@ -2804,7 +3057,7 @@ function setSettingsCacheView(showCache) {
         } catch(e) {
             console.warn('Tab 4 init failed', e);
             toggleSkeleton('tab4-skeleton', false);
-            const errorHtml = '<span class="error" style="padding:20px; display:block;">載入失敗：暫時無法連接九巴、城巴及專線小巴開放數據。請稍後重試。</span>';
+            const errorHtml = '<span class="error" style="padding:20px; display:block;">載入失敗：暫時無法連接九巴、城巴、大嶼山巴士及專線小巴開放數據。請稍後重試。</span>';
             if (target) target.innerHTML = errorHtml;
             else container.innerHTML = `<div class="route-list-wrapper" id="tab4-routes-append-target">${errorHtml}</div>`;
             container.style.display = 'block';
@@ -2927,6 +3180,7 @@ function setSettingsCacheView(showCache) {
             if (routeId) return match.tokens.has(`GMB:${routeCode}:${routeId}`);
             return true;
         }
+        if (dir.isNlb) return match.tokens.has(`NLB:${routeCode}`);
         if (dir.isCitybus) return match.tokens.has(`CTB:${routeCode}`);
         return match.tokens.has(`KMB:${routeCode}`);
     }
@@ -3153,6 +3407,28 @@ function setSettingsCacheView(showCache) {
         return false;
     }
 
+    async function nlbDirectionHasEtaTab4(item) {
+        const dir = item.dir || {};
+        if (!dir.nlbRouteId) return false;
+        const stops = await getNlbRouteStopsForDetail(dir.nlbRouteId);
+        if (!stops || stops.length === 0) return false;
+        const probeStops = stops.length <= 6 ? stops : [stops[0], ...stops.slice(1, 3), ...stops.slice(-3)];
+        const results = await Promise.allSettled(probeStops.map(s => fetchNlbEtaForStop(dir.nlbRouteId, s.stop)));
+        return results.some(result => result.status === 'fulfilled' && result.value && result.value.length > 0);
+    }
+
+    async function fetchAndApplyNlbEtaTab4(items) {
+        if (!items || items.length === 0) return;
+        const chunkSize = 4;
+        for (let i = 0; i < items.length; i += chunkSize) {
+            const chunk = items.slice(i, i + chunkSize);
+            const results = await Promise.allSettled(chunk.map(async item => ({ ...item, hasEta: await nlbDirectionHasEtaTab4(item) })));
+            results.forEach(result => {
+                if (result.status === 'fulfilled') setTab4DirEtaStatus(result.value.statusKey, result.value.hasEta);
+            });
+        }
+    }
+
     async function fetchAndApplyCitybusEtaTab4(items) {
         if (!items || items.length === 0) return;
         setTab4Loading(true);
@@ -3198,6 +3474,7 @@ function setSettingsCacheView(showCache) {
     function fetchAndApplyEtaStatusForTab4Keys(groupKeys, force = false) {
         const kmbRoutes = new Set();
         const ctbItems = [];
+        const nlbItems = [];
         const gmbItems = [];
 
         (groupKeys || []).forEach(rName => {
@@ -3210,6 +3487,8 @@ function setSettingsCacheView(showCache) {
                     // GMB has no cheap route-level ETA endpoint. Do not probe every
                     // stop from the directory; it delays the route the user actually opens.
                     return;
+                } else if (dir.isNlb) {
+                    nlbItems.push({ rName, dir, statusKey });
                 } else if (dir.isCitybus) {
                     ctbItems.push({ rName, dir, statusKey });
                 } else {
@@ -3221,6 +3500,7 @@ function setSettingsCacheView(showCache) {
         const jobs = [];
         if (kmbRoutes.size) jobs.push(fetchAndApplyEtaTab4([...kmbRoutes]));
         if (ctbItems.length) jobs.push(fetchAndApplyCitybusEtaTab4(ctbItems));
+        if (nlbItems.length) jobs.push(fetchAndApplyNlbEtaTab4(nlbItems));
         return Promise.allSettled(jobs);
     }
 
@@ -3289,7 +3569,7 @@ function setSettingsCacheView(showCache) {
                 let hasAnyEta = false;
                 dirs.forEach(d => {
                     const boundCode = d.bound === 'O' ? 'O' : 'I';
-                    if (d.isCitybus || window.routeEtaStatusTab3[`${rName}-${boundCode}`]) hasAnyEta = true;
+                    if (d.isCitybus || d.isNlb || window.routeEtaStatusTab3[`${rName}-${boundCode}`]) hasAnyEta = true;
                 });
                 isRowInactive = !hasAnyEta;
             }
@@ -3341,6 +3621,10 @@ function setSettingsCacheView(showCache) {
             return `GMB-${region}-${routeCode}-${routeId}-${routeSeq}`;
         }
 
+        if (dir.isNlb) {
+            return `NLB-${routeCode}-${String(dir.nlbRouteId || 'NOID')}`;
+        }
+
         if (dir.isCitybus) {
             return `CTB-${routeCode}-${boundCode}`;
         }
@@ -3381,6 +3665,7 @@ function setSettingsCacheView(showCache) {
         let operatorText = '九巴';
         if (displayRouteName.startsWith('A') || displayRouteName.startsWith('NA')) operatorText = '龍運';
         if (dirs[0] && dirs[0].isCitybus) operatorText = '城巴';
+        if (dirs[0] && dirs[0].isNlb) operatorText = '大嶼山巴士';
         if (dirs[0] && dirs[0].isGmb) operatorText = dirs[0].operatorName || '專線小巴';
         if (!(dirs[0] && dirs[0].isGmb) && ['112','116','118','102','104','111','115','115P','117','171','601','603','619','671','680','681','690','904','905','907D','914','930','948','962','969'].includes(displayRouteName)) operatorText = '城巴+九巴';
 
@@ -3390,6 +3675,7 @@ function setSettingsCacheView(showCache) {
         let badgeColor = operatorText.includes('九巴') ? 'var(--kmb-red)' : 'var(--text-main)';
         if (operatorText.includes('龍運')) badgeColor = '#E67E22';
         if (operatorText === '城巴') badgeColor = '#F1C40F';
+        if (operatorText === '大嶼山巴士') badgeColor = 'var(--nlb-green)';
         if (operatorText.includes('小巴')) badgeColor = 'var(--gmb-green)';
 
         function makeDirBlock(dir) {
@@ -3402,7 +3688,7 @@ function setSettingsCacheView(showCache) {
             if (!isRowInactive) {
                 let hasEta = true;
                 if (isTab3) {
-                    if (!dir.isCitybus && !dir.isGmb) {
+                    if (!dir.isCitybus && !dir.isGmb && !dir.isNlb) {
                         hasEta = window.routeEtaStatusTab3[`${rName}-${boundCode}`];
                         if (!hasEta) {
                             noServiceClass = ' no-service';
@@ -3429,9 +3715,11 @@ function setSettingsCacheView(showCache) {
             const regionArg = escapeJsArg(dir.gmbRegion || '');
             const routeIdArg = escapeJsArg(dir.routeId || '');
             const routeSeqArg = escapeJsArg(dir.routeSeq || '');
+            const nlbRouteIdArg = escapeJsArg(dir.nlbRouteId || '');
+            const nlbPairKeyArg = escapeJsArg(dir.nlbPairKey || '');
             const isGmbPlaceholder = !!(dir.isGmb && dir.gmbPlaceholder);
             const directionPrefixHtml = isGmbPlaceholder ? '' : '<span class="dir-prefix">往</span>';
-            const clickAttr = isGmbPlaceholder ? '' : `onclick="showRouteStops('${routeArg}', '${boundStr}', '${destArg}', ${dir.isCitybus || false}, '${badgeArg}', ${isTab3}, ${dir.isGmb || false}, '${regionArg}', '${routeIdArg}', '${routeSeqArg}')"`;
+            const clickAttr = isGmbPlaceholder ? '' : `onclick="showRouteStops('${routeArg}', '${boundStr}', '${destArg}', ${dir.isCitybus || false}, '${badgeArg}', ${isTab3}, ${dir.isGmb || false}, '${regionArg}', '${routeIdArg}', '${routeSeqArg}', false, ${dir.isNlb || false}, '${nlbRouteIdArg}', '${nlbPairKeyArg}')"`;
             const placeholderClass = isGmbPlaceholder ? ' route-dir-loading' : '';
 
             return `
@@ -3474,11 +3762,13 @@ function setSettingsCacheView(showCache) {
     function tab4DirectionMatchesContext(dir, ctx) {
         if (!dir || !ctx) return false;
         if (!!dir.isGmb !== !!ctx.isGmb) return false;
+        if (!!dir.isNlb !== !!ctx.isNlb) return false;
         if (!!dir.isCitybus !== !!ctx.isCitybus) return false;
         const dirRoute = String(dir.route || dir.displayRoute || '').toUpperCase();
         const ctxRoute = String(ctx.route || '').toUpperCase();
         if (dirRoute && ctxRoute && dirRoute !== ctxRoute) return false;
         if (ctx.isGmb && ctx.gmbRegion && dir.gmbRegion && String(dir.gmbRegion) !== String(ctx.gmbRegion)) return false;
+        if (ctx.isNlb && ctx.nlbPairKey && dir.nlbPairKey && String(dir.nlbPairKey) !== String(ctx.nlbPairKey)) return false;
         return true;
     }
 
@@ -3496,6 +3786,7 @@ function setSettingsCacheView(showCache) {
         const routeUpper = String(ctx.route || '').toUpperCase();
         const candidateKeys = [];
         if (ctx.isGmb && ctx.gmbRegion) candidateKeys.push(`GMB-${ctx.gmbRegion}-${ctx.route}`);
+        if (ctx.isNlb && ctx.nlbPairKey) candidateKeys.push(ctx.nlbPairKey);
         candidateKeys.push(ctx.route);
 
         for (const key of candidateKeys) {
@@ -3556,7 +3847,10 @@ function setSettingsCacheView(showCache) {
             opposite.gmbRegion || '',
             opposite.routeId || '',
             opposite.routeSeq || '',
-            true
+            true,
+            !!opposite.isNlb,
+            opposite.nlbRouteId || '',
+            opposite.nlbPairKey || ''
         );
     }
 
@@ -3564,8 +3858,8 @@ function setSettingsCacheView(showCache) {
     // 共用：路線詳情與實時 ETA
     // ==========================================
     function renderRouteDetailStopsView({
-        container, stops, etaMap, etaLoading, route, bound, dest, isCitybus, isGmb,
-        gmbRegion, gmbRouteId, gmbRouteSeq, badgeColor, isTab3, fareMap
+        container, stops, etaMap, etaLoading, route, bound, dest, isCitybus, isGmb, isNlb,
+        gmbRegion, gmbRouteId, gmbRouteSeq, nlbRouteId, nlbPairKey, routeStopCount, badgeColor, isTab3, fareMap
     }) {
         const processedStops = (stops || []).map(s => {
             const stopEtas = (etaMap && etaMap[String(s.seq)]) || [];
@@ -3578,7 +3872,7 @@ function setSettingsCacheView(showCache) {
             return { activeCount: 0 };
         }
 
-        const shouldShowFare = !!isGmb || !isCitybus;
+        const shouldShowFare = true;
         const renderStopFare = s => shouldShowFare
             ? `<div class="route-stop-fare" data-stop-fare-seq="${escapeHtml(String(s.seq || ''))}">${formatFareAmount(fareMap && fareMap[String(s.seq)])}</div>`
             : '';
@@ -3592,6 +3886,10 @@ function setSettingsCacheView(showCache) {
                 dest,
                 isCitybus,
                 isGmb,
+                isNlb,
+                nlbRouteId,
+                nlbPairKey,
+                routeStopCount,
                 gmbRegion,
                 gmbRouteId,
                 gmbRouteSeq,
@@ -3684,7 +3982,7 @@ function setSettingsCacheView(showCache) {
         });
     }
 
-    async function showRouteStops(route, bound, dest, isCitybus, badgeColor, isTab3, isGmb = false, gmbRegion = '', gmbRouteId = '', gmbRouteSeq = '', keepTab4ListScroll = false) {
+    async function showRouteStops(route, bound, dest, isCitybus, badgeColor, isTab3, isGmb = false, gmbRegion = '', gmbRouteId = '', gmbRouteSeq = '', keepTab4ListScroll = false, isNlb = false, nlbRouteId = '', nlbPairKey = '') {
         const prefix = isTab3 ? 'tab3-' : 'tab4-';
         const requestSeq = (window.routeDetailRequestSeq = (window.routeDetailRequestSeq || 0) + 1);
         const isCurrentRequest = () => window.routeDetailRequestSeq === requestSeq;
@@ -3692,13 +3990,15 @@ function setSettingsCacheView(showCache) {
         let resolvedGmbRegionForFavorites = gmbRegion;
         let resolvedGmbRouteIdForFavorites = gmbRouteId;
         let resolvedGmbRouteSeqForFavorites = gmbRouteSeq;
+        let resolvedNlbRouteIdForFavorites = nlbRouteId;
+        let resolvedNlbPairKeyForFavorites = nlbPairKey;
         const tab4ScrollEl = !isTab3 ? document.getElementById('tab-4') : null;
         const tab4ListView = !isTab3 ? document.getElementById('tab4-route-list-view') : null;
         if (!isTab3 && !keepTab4ListScroll && tab4ScrollEl && tab4ListView && tab4ListView.style.display !== 'none') {
             window.tab4ListScrollTop = tab4ScrollEl.scrollTop;
         }
         if (!isTab3) {
-            updateTab4OppositeDirectionButton({ route, bound, dest, isCitybus: !!isCitybus, isGmb: !!isGmb, gmbRegion, gmbRouteId, gmbRouteSeq, badgeColor });
+            updateTab4OppositeDirectionButton({ route, bound, dest, isCitybus: !!isCitybus, isGmb: !!isGmb, isNlb: !!isNlb, gmbRegion, gmbRouteId, gmbRouteSeq, nlbRouteId, nlbPairKey, badgeColor });
         }
 
         document.getElementById(`${prefix}route-list-view`).style.display = 'none';
@@ -3737,6 +4037,10 @@ function setSettingsCacheView(showCache) {
                 detailEtaStatusKey = makeTab4DirStatusKey('', { route, bound: boundCode, isGmb: true, gmbRegion: resolvedGmbRegionForFavorites, routeId: gmbDetail.routeId, routeSeq: gmbDetail.routeSeq });
                 if (gmbDetail.dest_tc) document.getElementById(`${prefix}detail-route-dest`).innerText = `往 ${gmbDetail.dest_tc}`;
                 stops = await getGmbRouteStopsForDetail(gmbDetail.routeId, gmbDetail.routeSeq);
+            } else if (isNlb) {
+                detailEtaStatusKey = makeTab4DirStatusKey('', { route, bound: boundCode, isNlb: true, nlbRouteId: resolvedNlbRouteIdForFavorites });
+                stops = await getNlbRouteStopsForDetail(resolvedNlbRouteIdForFavorites);
+                fareMap = getNlbFareMapFromStops(stops);
             } else if (isCitybus) {
                 detailEtaStatusKey = makeTab4DirStatusKey('', { route, bound: boundCode, isCitybus: true });
                 stops = await getRouteStopsCached(route, bound === 'outbound' ? 'outbound' : 'inbound', true);
@@ -3752,21 +4056,23 @@ function setSettingsCacheView(showCache) {
             // stop count as an extra guard against O/I vs GTFS bound mismatches.
             if (!isTab3) {
                 updateTab4OppositeDirectionButton({
-                    route, bound, dest: resolvedDestForFavorites, isCitybus: !!isCitybus, isGmb: !!isGmb,
+                    route, bound, dest: resolvedDestForFavorites, isCitybus: !!isCitybus, isGmb: !!isGmb, isNlb: !!isNlb,
                     gmbRegion: resolvedGmbRegionForFavorites, gmbRouteId: resolvedGmbRouteIdForFavorites,
-                    gmbRouteSeq: resolvedGmbRouteSeqForFavorites, badgeColor, stopCount: stops.length
+                    gmbRouteSeq: resolvedGmbRouteSeqForFavorites, nlbRouteId: resolvedNlbRouteIdForFavorites,
+                    nlbPairKey: resolvedNlbPairKeyForFavorites, badgeColor, stopCount: stops.length
                 });
             }
 
             // Fare lookup is static and independent of ETA. Start it immediately,
             // but do not block the stop list. When ready, update the fare labels in-place.
-            if (isGmb || !isCitybus) {
+            if (!isNlb || Object.keys(fareMap).length === 0) {
                 getRouteFareMap({
                     route,
                     bound,
                     dest: resolvedDestForFavorites,
                     isCitybus: !!isCitybus,
                     isGmb: !!isGmb,
+                    isNlb: !!isNlb,
                     gmbRouteId: resolvedGmbRouteIdForFavorites,
                     gmbRouteSeq: resolvedGmbRouteSeqForFavorites,
                     stopCount: stops.length
@@ -3783,22 +4089,36 @@ function setSettingsCacheView(showCache) {
             toggleSkeleton(`${prefix}detail-stops-skeleton`, false);
             renderRouteDetailStopsView({
                 container, stops, etaMap, etaLoading: true, route, bound,
-                dest: resolvedDestForFavorites, isCitybus, isGmb,
+                dest: resolvedDestForFavorites, isCitybus, isGmb, isNlb,
                 gmbRegion: resolvedGmbRegionForFavorites,
                 gmbRouteId: resolvedGmbRouteIdForFavorites,
                 gmbRouteSeq: resolvedGmbRouteSeqForFavorites,
+                nlbRouteId: resolvedNlbRouteIdForFavorites,
+                nlbPairKey: resolvedNlbPairKeyForFavorites,
+                routeStopCount: stops.length,
                 badgeColor, isTab3, fareMap
             });
 
             // Phase 2: fetch live ETA in the background. GMB/Citybus are capped to
             // six concurrent stop requests so opening a route does not flood the API.
             let etaCompleted = 0;
-            const etaTotal = (isGmb || isCitybus) ? Math.max(1, stops.length) : 1;
+            const etaTotal = (isGmb || isCitybus || isNlb) ? Math.max(1, stops.length) : 1;
             updateRouteDetailEtaProgress(container, 0, etaTotal);
             if (isGmb && gmbDetail) {
                 await mapWithConcurrency(stops, 6, async s => {
                     try {
                         const etaList = await fetchGmbEtaForStop(gmbDetail.routeId, gmbDetail.routeSeq, s.seq);
+                        if (etaList.length) etaMap[String(s.seq)] = etaList;
+                    } catch (err) {
+                    } finally {
+                        etaCompleted += 1;
+                        if (isCurrentRequest()) updateRouteDetailEtaProgress(container, etaCompleted, etaTotal);
+                    }
+                });
+            } else if (isNlb) {
+                await mapWithConcurrency(stops, 6, async s => {
+                    try {
+                        const etaList = await fetchNlbEtaForStop(resolvedNlbRouteIdForFavorites, s.stop);
                         if (etaList.length) etaMap[String(s.seq)] = etaList;
                     } catch (err) {
                     } finally {
@@ -3843,10 +4163,13 @@ function setSettingsCacheView(showCache) {
             if (!isCurrentRequest()) return;
             const result = renderRouteDetailStopsView({
                 container, stops, etaMap, etaLoading: false, route, bound,
-                dest: resolvedDestForFavorites, isCitybus, isGmb,
+                dest: resolvedDestForFavorites, isCitybus, isGmb, isNlb,
                 gmbRegion: resolvedGmbRegionForFavorites,
                 gmbRouteId: resolvedGmbRouteIdForFavorites,
                 gmbRouteSeq: resolvedGmbRouteSeqForFavorites,
+                nlbRouteId: resolvedNlbRouteIdForFavorites,
+                nlbPairKey: resolvedNlbPairKeyForFavorites,
+                routeStopCount: stops.length,
                 badgeColor, isTab3, fareMap
             });
             if (!isTab3 && detailEtaStatusKey) setTab4DirEtaStatus(detailEtaStatusKey, result.activeCount > 0);
@@ -3921,7 +4244,7 @@ function setSettingsCacheView(showCache) {
 
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
         window.addEventListener('load', () => {
-            navigator.serviceWorker.register('./sw.js?v=6.7.6', { updateViaCache: 'none' }).catch(err => {
+            navigator.serviceWorker.register('./sw.js?v=6.7.7', { updateViaCache: 'none' }).catch(err => {
                 console.warn('Service worker registration failed:', err);
             });
         });

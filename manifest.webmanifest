@@ -1,7 +1,7 @@
 {
   "name": "白石角出行",
   "short_name": "白石角出行",
-  "description": "白石角巴士、小巴及港鐵即時到站資訊",
+  "description": "白石角九巴、城巴、大嶼山巴士、小巴及港鐵即時到站資訊",
   "lang": "zh-HK",
   "start_url": "./",
   "display": "standalone",

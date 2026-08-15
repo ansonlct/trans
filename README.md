@@ -1,4 +1,14 @@
-# Transport App v6.7.6
+# Transport App v6.7.7
+
+## v6.7.7 Citybus fare / 7-day timetable / NLB
+
+- 城巴路線詳情及收藏啟用運輸署 GTFS 車資顯示。
+- 時間表由單一服務日改為連續 7 個服務日，逐日顯示固定開出時間及班次頻率。
+- 「白石角出發」、「我要回家」的巴士／小巴卡片可直接按路線標題開啟時間表；收藏卡片路線標題亦可開啟同一路線方向的一星期時間表。
+- 取消「巴士/小巴」查詢頁頂部的藍色 indeterminate loading bar；保留必要的車站 skeleton / ETA 百分比提示。
+- 新增大嶼山巴士（NLB）路線搜尋、方向、逐站車資、即時 ETA、收藏及 GTFS 時間表配對。NLB 路線總表加入每日 GitHub Pages 靜態快取，站表與 ETA 按路線即時／延遲載入。
+- 發佈包預先附帶最新官方 GTFS 衍生索引：2,315 個路線記錄、64,458 個上車站車資、65,118 個 frequency 時段；其中 NLB 有 35 個 route-number lookup，部署後可立即使用車資／時間表／中途站搜尋。
+
 
 ## v6.7.6 Daily update conflict fix
 
@@ -61,7 +71,7 @@
 - Disabled accidental double-click/double-tap zoom, pinch gesture zoom, text selection, drag selection and tap highlight.
 - Cache Status is now a two-page Settings slide: opening slides left; `上一頁` slides right back to Settings.
 
-# 白石角出行 v6.0.0 — GitHub Pages + 九巴 / 城巴 / 專線小巴每日靜態快取
+# 白石角出行 — GitHub Pages + 九巴 / 城巴 / 大嶼山巴士 / 專線小巴每日靜態快取
 
 純 GitHub Pages 版本，不需要 Node.js 後端。
 
@@ -85,6 +95,13 @@ GitHub Actions 每日香港時間約 **05:30** 更新靜態索引，網站以 **
 
 當使用者真正打開某條城巴路線時，網站才使用 V2 per-route / per-stop API；該路線的站序和站點詳情會在瀏覽器保存 24 小時，同一天再次開啟毋須重抓。ETA 仍然即時。
 
+### 大嶼山巴士
+
+每日預抓：
+- `data/nlb-route.json` — 全部嶼巴路線
+
+當使用者打開嶼巴路線時，網站按 `routeId` 讀取官方 V2 站表；站表同時提供逐站車資，ETA 保持即時。GTFS 衍生索引亦會加入 NLB 的中途站搜尋、車資及時間表配對。
+
 ### 專線小巴
 
 每日預抓：
@@ -96,7 +113,7 @@ GitHub Actions 每日香港時間約 **05:30** 更新靜態索引，網站以 **
 
 ### ETA
 
-**九巴、城巴、專線小巴、港鐵 ETA 全部保持即時。** 每日 cache 只用於靜態路線/車站索引。
+**九巴、城巴、大嶼山巴士、專線小巴、港鐵 ETA 全部保持即時。** 每日 cache 只用於靜態路線/車站索引。
 
 ## 第一次部署 / 升級
 
@@ -111,12 +128,14 @@ GitHub Actions 每日香港時間約 **05:30** 更新靜態索引，網站以 **
 kmb-route.json
 kmb-stop.json
 ctb-route.json
+nlb-route.json
 gmb-route-HKI.json
 gmb-route-KLN.json
 gmb-route-NT.json
 transport-meta.json
 stop-search-index.json
 route-fares.json
+route-timetables.json
 ```
 
 
@@ -155,7 +174,7 @@ transport-app/
 
 ## 設定中的快取狀態燈
 
-設定頁的「快取狀態」按鈕按入後，才會讀取 `data/transport-meta.json`，顯示 KMB / Citybus / GMB 快取健康狀態：
+設定頁的「快取狀態」按鈕按入後，才會讀取 `data/transport-meta.json`，顯示 KMB / Citybus / NLB / GMB 快取健康狀態：
 
 - 綠色 `Success`：該營辦商所有預定每日資料已於今次更新成功。
 - 黃色 `Partially success`：只有部分資料更新成功，或今日更新失敗但仍有上一日舊快取可用。
