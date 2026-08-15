@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '6.4.0';
+const APP_VERSION = '6.5.0';
 
 function renderAppVersion() {
     const el = document.getElementById('app-version-value');
@@ -802,7 +802,6 @@ function setSettingsCacheView(showCache) {
         if (force) invalidateLiveTransportMemoryCache();
 
         const updateEl = document.getElementById('last-updated');
-        if (updateEl) updateEl.innerText = '更新中…';
 
         let jobs = [];
         if (tabId === 1) {
@@ -815,7 +814,20 @@ function setSettingsCacheView(showCache) {
             return;
         }
 
-        const task = Promise.allSettled(jobs).then(results => {
+        let completedJobs = 0;
+        const totalJobs = Math.max(1, jobs.length);
+        const showRefreshProgress = () => {
+            if (!updateEl || currentTab !== tabId) return;
+            const percent = Math.min(100, Math.round((completedJobs / totalJobs) * 100));
+            updateEl.innerText = `更新中 ${percent}%`;
+        };
+        showRefreshProgress();
+        const trackedJobs = jobs.map(job => Promise.resolve(job).finally(() => {
+            completedJobs += 1;
+            showRefreshProgress();
+        }));
+
+        const task = Promise.allSettled(trackedJobs).then(results => {
             lastRefreshAtByTab.set(tabId, Date.now());
             const failed = results.filter(r => r.status === 'rejected').length;
             if (updateEl && currentTab === tabId) {
@@ -1207,7 +1219,7 @@ function setSettingsCacheView(showCache) {
     window.allRoutesGroupsTab4 = {};
     window.tab4Loaded = false;
     window.tab4SearchText = '';
-    window.tab4OperatorFilter = 'ALL';
+    window.tab4OperatorFilter = 'KMB';
     window.tab4SourceStatus = { kmb: false, ctb: false, gmb: false };
     window.routeEtaStatusTab4 = {};
     window.gmbRouteDetailCache = {};
@@ -1477,7 +1489,7 @@ function setSettingsCacheView(showCache) {
                 <div class="card-content favorite-card-content">
                     <div class="favorite-stop-name">${escapeHtml(fav.stopName)}</div>
                     <div class="favorite-stop-meta">往 ${escapeHtml(fav.dest || '')}</div>
-                    <div id="${etaId}" class="favorite-card-eta"><div class="status-msg" style="padding: 8px 0; text-align:left;">更新中...</div></div>
+                    <div id="${etaId}" class="favorite-card-eta"><div class="status-msg" style="padding: 8px 0; text-align:left;">更新中 0%</div></div>
                 </div>
             </div>`;
         }).join('');
@@ -2031,6 +2043,15 @@ function setSettingsCacheView(showCache) {
         keyboard.setAttribute('aria-hidden', 'true');
         document.body.classList.remove('route-keyboard-open');
     }
+
+    // 點擊車號輸入欄／自訂鍵盤以外任何位置即收起鍵盤，行為貼近原生手機鍵盤。
+    document.addEventListener('pointerdown', event => {
+        const keyboard = document.getElementById('route-keyboard');
+        if (!keyboard || !keyboard.classList.contains('open')) return;
+        const input = document.getElementById('route-search-input');
+        if (keyboard.contains(event.target) || (input && (event.target === input || input.contains?.(event.target)))) return;
+        hideRouteKeyboard();
+    }, true);
 
     function setRouteKeyboardSearchValue(value) {
         const input = document.getElementById('route-search-input');
@@ -2773,19 +2794,20 @@ function setSettingsCacheView(showCache) {
 
     function updateTab4OppositeDirectionButton(ctx) {
         const btn = document.getElementById('tab4-detail-opposite-btn');
+        const destEl = document.getElementById('tab4-detail-opposite-dest');
         if (!btn) return;
         window.tab4DetailContext = ctx || null;
         const opposite = getTab4OppositeDirection(ctx);
         if (!opposite) {
             btn.style.display = 'none';
-            btn.textContent = '↔ 另一方向';
+            if (destEl) destEl.textContent = '另一方向';
             btn.title = '未有另一方向資料';
             return;
         }
         const dest = String(opposite.dest_tc || '').trim();
-        btn.textContent = dest ? `↔ 往${dest}` : '↔ 另一方向';
-        btn.title = dest ? `即時查看另一方向：往${dest}` : '即時查看另一方向';
-        btn.style.display = 'inline-block';
+        if (destEl) destEl.textContent = dest ? `往 ${dest}` : '另一方向';
+        btn.title = dest ? `即時查看對面線：往${dest}` : '即時查看另一方向';
+        btn.style.display = 'flex';
     }
 
     async function switchTab4DetailOppositeDirection() {
@@ -2848,7 +2870,7 @@ function setSettingsCacheView(showCache) {
         let html = '<div style="background:var(--bg-color);min-height:100%;padding-bottom:20px;">';
 
         if (etaLoading) {
-            html += '<div class="detail-eta-loading">車站已載入 · ETA 更新中…</div>';
+            html += '<div class="detail-eta-loading">車站已載入 · ETA 更新中 0%</div>';
             html += '<div style="background:var(--card-bg);border-top:1px solid var(--separator);">';
             processedStops.forEach(s => {
                 const stopName = s.name_tc || window.globalStopsMap[s.stop] || s.stop;
@@ -2864,7 +2886,7 @@ function setSettingsCacheView(showCache) {
                             ${escapeHtml(stopName)} ${badge}
                         </div>
                         <div style="display:flex;align-items:center;white-space:nowrap;margin-left:auto;">
-                            <span class="detail-eta-pending">更新中…</span>${favoriteBtn}
+                            <span class="detail-eta-pending">更新中 0%</span>${favoriteBtn}
                         </div>
                     </div>
                 </div>`;
@@ -2930,6 +2952,16 @@ function setSettingsCacheView(showCache) {
         container.innerHTML = html;
         refreshFavoriteButtonStates();
         return { activeCount: activeStops.length };
+    }
+
+    function updateRouteDetailEtaProgress(container, completed, total) {
+        if (!container || !total) return;
+        const percent = Math.max(0, Math.min(100, Math.round((completed / total) * 100)));
+        const heading = container.querySelector('.detail-eta-loading');
+        if (heading) heading.textContent = `車站已載入 · ETA 更新中 ${percent}%`;
+        container.querySelectorAll('.detail-eta-pending').forEach(el => {
+            el.textContent = `更新中 ${percent}%`;
+        });
     }
 
     async function showRouteStops(route, bound, dest, isCitybus, badgeColor, isTab3, isGmb = false, gmbRegion = '', gmbRouteId = '', gmbRouteSeq = '', keepTab4ListScroll = false) {
@@ -3005,12 +3037,19 @@ function setSettingsCacheView(showCache) {
 
             // Phase 2: fetch live ETA in the background. GMB/Citybus are capped to
             // six concurrent stop requests so opening a route does not flood the API.
+            let etaCompleted = 0;
+            const etaTotal = (isGmb || isCitybus) ? Math.max(1, stops.length) : 1;
+            updateRouteDetailEtaProgress(container, 0, etaTotal);
             if (isGmb && gmbDetail) {
                 await mapWithConcurrency(stops, 6, async s => {
                     try {
                         const etaList = await fetchGmbEtaForStop(gmbDetail.routeId, gmbDetail.routeSeq, s.seq);
                         if (etaList.length) etaMap[String(s.seq)] = etaList;
-                    } catch (err) {}
+                    } catch (err) {
+                    } finally {
+                        etaCompleted += 1;
+                        if (isCurrentRequest()) updateRouteDetailEtaProgress(container, etaCompleted, etaTotal);
+                    }
                 });
             } else if (isCitybus) {
                 await mapWithConcurrency(stops, 6, async s => {
@@ -3025,7 +3064,11 @@ function setSettingsCacheView(showCache) {
                                 }
                             });
                         }
-                    } catch (err) {}
+                    } catch (err) {
+                    } finally {
+                        etaCompleted += 1;
+                        if (isCurrentRequest()) updateRouteDetailEtaProgress(container, etaCompleted, etaTotal);
+                    }
                 });
             } else {
                 const etaObj = await fetchJsonCached(`https://data.etabus.gov.hk/v1/transport/kmb/route-eta/${route}/1`, { ttl: 12000, timeout: 6000 });
@@ -3038,6 +3081,8 @@ function setSettingsCacheView(showCache) {
                         }
                     });
                 }
+                etaCompleted = 1;
+                if (isCurrentRequest()) updateRouteDetailEtaProgress(container, etaCompleted, etaTotal);
             }
 
             if (!isCurrentRequest()) return;
@@ -3121,7 +3166,7 @@ function setSettingsCacheView(showCache) {
 
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
         window.addEventListener('load', () => {
-            navigator.serviceWorker.register('./sw.js?v=6.4.0', { updateViaCache: 'none' }).catch(err => {
+            navigator.serviceWorker.register('./sw.js?v=6.5.0', { updateViaCache: 'none' }).catch(err => {
                 console.warn('Service worker registration failed:', err);
             });
         });

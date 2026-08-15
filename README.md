@@ -1,7 +1,11 @@
-# Transport App v6.4.0
+# Transport App v6.5.0
 
+## v6.5.0 KMB default / bottom keyboard / opposite-route layout / progress percentage
+- 巴士/小巴查詢預設選擇九巴。
+- 車號鍵盤貼齊屏幕底部；點擊鍵盤及搜尋欄以外位置會自動收起。
+- 路線詳情的對面線切換改為獨立全寬藍色按鈕，完整顯示目的地站名並支援換行。
+- 手動更新及路線 ETA 載入顯示實際完成百分比。
 
-## v6.4.0 GMB stop names / interaction lock / settings slide
 
 - GMB route directory no longer shows generic `方向 1` / `方向 2`; visible GMB routes resolve terminal stop names from route-stop data and cache them locally.
 - Disabled accidental double-click/double-tap zoom, pinch gesture zoom, text selection, drag selection and tap highlight.
