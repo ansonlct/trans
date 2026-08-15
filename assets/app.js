@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '6.7.0';
+const APP_VERSION = '6.7.1';
 
 function renderAppVersion() {
     const el = document.getElementById('app-version-value');
@@ -2894,9 +2894,9 @@ function setSettingsCacheView(showCache) {
     function applyTab4DirEtaVisual(statusKey, hasEta) {
         const el = document.getElementById('route-dir-' + makeTab4SafeDomId(statusKey));
         if (!el) return;
-        el.style.opacity = hasEta ? '1' : '0.35';
-        el.style.filter = hasEta ? 'none' : 'grayscale(100%)';
-        el.style.transition = 'all 0.3s';
+        el.classList.toggle('no-service', !hasEta);
+        el.setAttribute('data-eta-available', hasEta ? '1' : '0');
+        el.title = hasEta ? '' : '此方向暫無班次';
     }
 
     function setTab4DirEtaStatus(statusKey, hasEta) {
@@ -2933,19 +2933,27 @@ function setSettingsCacheView(showCache) {
             const boundStr = dir.bound === 'O' ? 'outbound' : 'inbound';
             const boundCode = dir.bound === 'O' ? 'O' : 'I';
             
-            let dirOpacityStyle = '';
-            if (!isRowInactive) { 
+            let noServiceClass = '';
+            let noServiceTitle = '';
+            if (!isRowInactive) {
                 let hasEta = true;
                 if (isTab3) {
                     if (!dir.isCitybus && !dir.isGmb) {
                         hasEta = window.routeEtaStatusTab3[`${rName}-${boundCode}`];
-                        if (!hasEta) dirOpacityStyle = 'opacity: 0.35; filter: grayscale(100%);';
+                        if (!hasEta) {
+                            noServiceClass = ' no-service';
+                            noServiceTitle = ' title="此方向暫無班次"';
+                        }
                     }
                 } else {
                     const statusKey = makeTab4DirStatusKey(rName, dir);
                     hasEta = window.routeEtaStatusTab4[statusKey];
-                    if (hasEta === false) dirOpacityStyle = 'opacity: 0.35; filter: grayscale(100%); transition: all 0.3s;';
-                    else dirOpacityStyle = 'opacity: 1; filter: none; transition: all 0.3s;';
+                    if (hasEta === false) {
+                        noServiceClass = ' no-service';
+                        noServiceTitle = ' title="此方向暫無班次" data-eta-available="0"';
+                    } else if (hasEta === true) {
+                        noServiceTitle = ' data-eta-available="1"';
+                    }
                 }
             }
 
@@ -2963,7 +2971,7 @@ function setSettingsCacheView(showCache) {
             const placeholderClass = isGmbPlaceholder ? ' route-dir-loading' : '';
 
             return `
-            <div ${blockId} class="route-dir-block${placeholderClass}" style="${dirOpacityStyle}" ${clickAttr}>
+            <div ${blockId} class="route-dir-block${placeholderClass}${noServiceClass}"${noServiceTitle} ${clickAttr}>
                 <div class="dir-dest-container">
                     ${directionPrefixHtml}
                     <span class="dir-dest">${dir.dest_tc}</span>
@@ -3155,61 +3163,47 @@ function setSettingsCacheView(showCache) {
             return { activeCount: 0 };
         }
 
-        const activeStops = processedStops.filter(s => s.sortedEtas.length > 0);
-        const inactiveStops = processedStops.filter(s => s.sortedEtas.length === 0);
+        // Keep the official stop sequence intact.  A stop with no current ETA is
+        // no longer moved to a separate "suspended / no departures" section;
+        // it stays in place and is dimmed directly in the route list.
+        let activeCount = 0;
+        html += '<div style="background:var(--card-bg);border-top:1px solid var(--separator);box-shadow:0 4px 12px rgba(0,0,0,0.04);">';
+        processedStops.forEach(s => {
+            const stopName = s.name_tc || window.globalStopsMap[s.stop] || s.stop;
+            const hasEta = s.sortedEtas.length > 0;
+            if (hasEta) activeCount++;
 
-        if (activeStops.length > 0) {
-            html += '<div style="background:var(--card-bg);border-top:1px solid var(--separator);box-shadow:0 4px 12px rgba(0,0,0,0.04);margin-bottom:24px;">';
-            activeStops.forEach(s => {
-                const stopName = s.name_tc || window.globalStopsMap[s.stop] || s.stop;
-                const isTargetStation = isTab3 && targetKeywords.some(kw => String(stopName).includes(kw));
-                const badge = isTargetStation ? '<span style="font-size:0.75rem;background:#34C759;color:white;padding:2px 8px;border-radius:6px;margin-left:8px;vertical-align:middle;font-weight:600;">目標車站</span>' : '';
-                const bgStyle = isTargetStation ? 'background:rgba(52,199,89,0.05);border-left:4px solid #34C759;' : 'background:var(--card-bg);border-left:4px solid transparent;';
-                const favoriteBtn = renderFavoriteButton(s, stopName);
-                html += `
-                <div style="padding:16px 16px 16px 12px;border-bottom:1px solid var(--separator);${bgStyle}display:flex;flex-direction:column;justify-content:center;">
-                    <div style="display:flex;justify-content:space-between;align-items:center;">
-                        <div style="flex:1;padding-right:12px;font-size:1.05rem;font-weight:700;color:var(--text-main);line-height:1.3;">
-                            <span style="display:inline-block;width:24px;font-size:0.85rem;font-weight:600;color:var(--text-sub);text-align:left;">${escapeHtml(s.seq)}.</span>
-                            ${escapeHtml(stopName)} ${badge}
-                        </div>
-                        <div style="display:flex;align-items:center;white-space:nowrap;margin-left:auto;">${generateEtaHtml(s.sortedEtas)}${favoriteBtn}</div>
-                    </div>
-                </div>`;
-            });
-            html += '</div>';
-        } else {
-            html += '<div class="status-msg" style="padding:20px;">目前沒有營運中的班次。</div>';
-        }
+            const isTargetStation = isTab3 && targetKeywords.some(kw => String(stopName).includes(kw));
+            const badge = isTargetStation ? '<span style="font-size:0.75rem;background:#34C759;color:white;padding:2px 8px;border-radius:6px;margin-left:8px;vertical-align:middle;font-weight:600;">目標車站</span>' : '';
+            const rowBg = isTargetStation ? 'background:rgba(52,199,89,0.05);border-left:4px solid #34C759;' : 'background:var(--card-bg);border-left:4px solid transparent;';
+            const inactiveStyle = hasEta ? '' : 'opacity:0.42;filter:grayscale(100%);';
+            const nameColor = hasEta ? 'var(--text-main)' : 'var(--text-sub)';
+            const etaHtml = hasEta
+                ? generateEtaHtml(s.sortedEtas)
+                : '<span style="font-size:0.82rem;color:var(--text-sub);font-weight:600;">暫無班次</span>';
+            const favoriteBtn = renderFavoriteButton(s, stopName);
 
-        if (inactiveStops.length > 0) {
             html += `
-            <div style="background:var(--bg-color);padding:12px 16px;font-size:0.85rem;font-weight:700;color:var(--text-sub);border-bottom:1px solid var(--separator);border-top:1px solid var(--separator);display:flex;align-items:center;">
-                <div style="flex:1;height:1px;background:var(--separator);margin-right:12px;"></div>
-                暫停服務 / 未有班次之車站
-                <div style="flex:1;height:1px;background:var(--separator);margin-left:12px;"></div>
-            </div>
-            <div style="background:var(--card-bg);opacity:0.55;">`;
-            inactiveStops.forEach(s => {
-                const stopName = s.name_tc || window.globalStopsMap[s.stop] || s.stop;
-                const favoriteBtn = renderFavoriteButton(s, stopName);
-                html += `
-                <div style="padding:12px 16px 12px 12px;border-bottom:1px solid var(--separator);">
-                    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
-                        <div style="font-size:0.95rem;font-weight:600;color:var(--text-sub);line-height:1.4;flex:1;min-width:0;">
-                            <span style="display:inline-block;width:26px;font-size:0.85rem;font-weight:600;">${escapeHtml(s.seq)}.</span>
-                            <span>${escapeHtml(stopName)}</span>
-                        </div>${favoriteBtn}
+            <div style="padding:16px 16px 16px 12px;border-bottom:1px solid var(--separator);${rowBg}${inactiveStyle}display:flex;flex-direction:column;justify-content:center;transition:opacity 0.25s,filter 0.25s;">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+                    <div style="flex:1;min-width:0;padding-right:12px;font-size:1.05rem;font-weight:700;color:${nameColor};line-height:1.3;">
+                        <span style="display:inline-block;width:24px;font-size:0.85rem;font-weight:600;color:var(--text-sub);text-align:left;">${escapeHtml(s.seq)}.</span>
+                        ${escapeHtml(stopName)} ${badge}
                     </div>
-                </div>`;
-            });
-            html += '</div>';
+                    <div style="display:flex;align-items:center;white-space:nowrap;margin-left:auto;">${etaHtml}${favoriteBtn}</div>
+                </div>
+            </div>`;
+        });
+        html += '</div>';
+
+        if (activeCount === 0) {
+            html += '<div class="status-msg" style="padding:16px 20px 0;">目前此方向沒有營運中的班次。</div>';
         }
 
         html += '</div>';
         container.innerHTML = html;
         refreshFavoriteButtonStates();
-        return { activeCount: activeStops.length };
+        return { activeCount };
     }
 
     function updateRouteDetailEtaProgress(container, completed, total) {
@@ -3424,7 +3418,7 @@ function setSettingsCacheView(showCache) {
 
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
         window.addEventListener('load', () => {
-            navigator.serviceWorker.register('./sw.js?v=6.7.0', { updateViaCache: 'none' }).catch(err => {
+            navigator.serviceWorker.register('./sw.js?v=6.7.1', { updateViaCache: 'none' }).catch(err => {
                 console.warn('Service worker registration failed:', err);
             });
         });

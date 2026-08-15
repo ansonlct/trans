@@ -159,3 +159,6 @@ body.route-keyboard-open #tab-4{padding-bottom:calc(var(--route-keyboard-reserve
 .route-keyboard-text-input:active{transform:scale(.96);background:color-mix(in srgb,var(--accent) 22%,transparent);}
 @supports not (background:color-mix(in srgb,#000 10%,transparent)){.route-keyboard-text-input{background:rgba(0,122,255,.12);}.route-keyboard-text-input:active{background:rgba(0,122,255,.2);}}
 @media(max-width:380px){.route-keyboard-text-input,.route-keyboard-close{padding-left:8px;padding-right:8px;}}
+
+/* v6.7.1: dim a single KMB/Citybus direction as soon as ETA confirms no service. */
+.route-dir-block.no-service{opacity:.35!important;filter:grayscale(100%)!important;transition:opacity .3s,filter .3s;}

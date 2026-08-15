@@ -1,4 +1,11 @@
-# Transport App v6.7.0
+# Transport App v6.7.1
+
+
+## v6.7.1 Direction / stop inactive display
+- 九巴及城巴路線目錄維持逐方向 ETA 狀態；某一方向確認沒有即時班次後，該方向直接灰階顯示。
+- 路線詳情取消「暫停服務 / 未有班次之車站」獨立分組。
+- 沒有 ETA 的車站保留原本官方站序，直接在原位置灰階並顯示「暫無班次」。
+- 當整個方向均沒有 ETA，詳情頁保留完整車站列表並提示目前此方向沒有營運中的班次。
 
 
 ## v6.7.0 Intermediate-stop search
