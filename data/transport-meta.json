@@ -1,6 +1,6 @@
 {
-  "updatedAt": "2026-08-14T21:51:23.451Z",
-  "serviceDay": "2026-08-14",
+  "updatedAt": "2026-08-15T06:39:41.510Z",
+  "serviceDay": "2026-08-15",
   "serviceDayCutoffHKT": "06:00",
   "operatorStatus": {
     "kmb": {
@@ -22,9 +22,25 @@
       "total": 3
     }
   },
+  "loadedCounts": {
+    "kmb": {
+      "routeNumbers": 795,
+      "stations": 6758
+    },
+    "citybus": {
+      "routeNumbers": 407,
+      "stations": 0
+    },
+    "gmb": {
+      "routeNumbers": 572,
+      "stations": 0
+    }
+  },
   "datasets": {
     "kmb-route.json": {
       "records": 1610,
+      "routeNumbers": 795,
+      "stations": 0,
       "source": "https://data.etabus.gov.hk/v1/transport/kmb/route/",
       "required": true,
       "available": true,
@@ -33,6 +49,8 @@
     },
     "kmb-stop.json": {
       "records": 6758,
+      "routeNumbers": 0,
+      "stations": 6758,
       "source": "https://data.etabus.gov.hk/v1/transport/kmb/stop",
       "required": true,
       "available": true,
@@ -41,6 +59,8 @@
     },
     "ctb-route.json": {
       "records": 407,
+      "routeNumbers": 407,
+      "stations": 0,
       "source": "https://rt.data.gov.hk/v2/transport/citybus/route/CTB",
       "required": true,
       "available": true,
@@ -49,6 +69,8 @@
     },
     "gmb-route-HKI.json": {
       "records": 108,
+      "routeNumbers": 109,
+      "stations": 0,
       "source": "https://data.etagmb.gov.hk/route/HKI",
       "required": true,
       "available": true,
@@ -57,6 +79,8 @@
     },
     "gmb-route-KLN.json": {
       "records": 132,
+      "routeNumbers": 133,
+      "stations": 0,
       "source": "https://data.etagmb.gov.hk/route/KLN",
       "required": true,
       "available": true,
@@ -65,6 +89,8 @@
     },
     "gmb-route-NT.json": {
       "records": 329,
+      "routeNumbers": 330,
+      "stations": 0,
       "source": "https://data.etagmb.gov.hk/route/NT",
       "required": true,
       "available": true,
