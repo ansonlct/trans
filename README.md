@@ -1,4 +1,11 @@
-# Transport App v6.6.0
+# Transport App v6.7.0
+
+
+## v6.7.0 Intermediate-stop search
+- 巴士/小巴搜尋格同時搜尋路線號碼、起訖站及所有中途站；例如輸入 `博研路` 會列出途經該站的路線。
+- 每日 GitHub Action 由運輸署繁體中文 GTFS 產生 `data/stop-search-index.json`，網站只下載一個輕量反向索引，不會搜尋時逐條路線呼叫 API。
+- 車號鍵盤新增 `站名⌨️`，手機可切換至系統中文鍵盤；清空搜尋後再次點擊搜尋格會回復車號鍵盤。
+- GMB 中途站索引保留官方 `route_id`，處理不同地區重覆小巴路線號碼時可精確辨識。
 
 ## v6.6.0 Search clear button / cache loaded counts
 - 巴士/小巴搜尋格新增圓形 `×` 清除按鈕；只有輸入內容時顯示。
@@ -71,6 +78,7 @@ gmb-route-HKI.json
 gmb-route-KLN.json
 gmb-route-NT.json
 transport-meta.json
+stop-search-index.json
 ```
 
 

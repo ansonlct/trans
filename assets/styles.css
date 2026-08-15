@@ -152,3 +152,10 @@ body.route-keyboard-open #tab-4{padding-bottom:calc(var(--route-keyboard-reserve
 .cache-status-result{gap:10px;min-width:0;}
 .cache-status-counts{color:var(--text-sub);font-size:.78rem;font-weight:650;font-variant-numeric:tabular-nums;white-space:nowrap;}
 @media(max-width:350px){.cache-status-counts{font-size:.72rem;}.cache-status-row{gap:8px;}}
+
+/* v6.7.0: station-name search keyboard switch */
+.route-keyboard-header-actions{display:flex;align-items:center;justify-content:flex-end;gap:6px;white-space:nowrap;}
+.route-keyboard-text-input{border:0;background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--accent);border-radius:10px;padding:0 9px;height:clamp(28px,6.2vw,32px);font-size:clamp(.72rem,2.4vw,.78rem);font-weight:850;cursor:pointer;font-family:inherit;white-space:nowrap;touch-action:manipulation;}
+.route-keyboard-text-input:active{transform:scale(.96);background:color-mix(in srgb,var(--accent) 22%,transparent);}
+@supports not (background:color-mix(in srgb,#000 10%,transparent)){.route-keyboard-text-input{background:rgba(0,122,255,.12);}.route-keyboard-text-input:active{background:rgba(0,122,255,.2);}}
+@media(max-width:380px){.route-keyboard-text-input,.route-keyboard-close{padding-left:8px;padding-right:8px;}}

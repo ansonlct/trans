@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '6.6.0';
+const APP_VERSION = '6.7.0';
 
 function renderAppVersion() {
     const el = document.getElementById('app-version-value');
@@ -1305,6 +1305,10 @@ function setSettingsCacheView(showCache) {
     window.tab4SearchText = '';
     window.tab4OperatorFilter = 'KMB';
     window.tab4SourceStatus = { kmb: false, ctb: false, gmb: false };
+    window.tab4StopSearchIndex = null;
+    window.tab4StopSearchIndexLoading = null;
+    window.tab4StopSearchQueryCache = new Map();
+    window.routeKeyboardForceTextInput = false;
     window.routeEtaStatusTab4 = {};
     window.gmbRouteDetailCache = {};
     window.gmbDirectionsLoadedKeys = {};
@@ -2111,6 +2115,16 @@ function setSettingsCacheView(showCache) {
 
     function showRouteKeyboard() {
         if (currentTab !== 4) return;
+        const input = document.getElementById('route-search-input');
+        // 站名模式交由手機原生中文鍵盤處理；只要欄內仍是文字查詢，
+        // 再次點擊亦保持文字鍵盤。清空後會自動回到車號鍵盤。
+        const hasTextQuery = Boolean(input && input.value.trim() && !/^[A-Z0-9]+$/i.test(input.value.trim()));
+        if (window.routeKeyboardForceTextInput || hasTextQuery) {
+            if (input) input.setAttribute('inputmode', 'text');
+            hideRouteKeyboard();
+            return;
+        }
+        if (input) input.setAttribute('inputmode', 'none');
         buildRouteKeyboard();
         routeKeyboardSync();
         const keyboard = document.getElementById('route-keyboard');
@@ -2118,6 +2132,33 @@ function setSettingsCacheView(showCache) {
         keyboard.classList.add('open');
         keyboard.setAttribute('aria-hidden', 'false');
         document.body.classList.add('route-keyboard-open');
+    }
+
+    function showStationTextKeyboard() {
+        const input = document.getElementById('route-search-input');
+        if (!input) return;
+        window.routeKeyboardForceTextInput = true;
+        hideRouteKeyboard();
+        input.setAttribute('inputmode', 'text');
+        // 先 blur 再 focus，令 iOS / Android 真正重新判斷 inputmode。
+        input.blur();
+        setTimeout(() => {
+            try { input.focus({ preventScroll: true }); } catch (e) { input.focus(); }
+        }, 30);
+    }
+
+    function onTab4SearchBlur() {
+        const input = document.getElementById('route-search-input');
+        if (!input) return;
+        setTimeout(() => {
+            if (document.activeElement === input) return;
+            const value = input.value.trim();
+            // 空白／純車號離開欄位後，下次點擊恢復車號鍵盤；中文字查詢則保留原生文字模式。
+            if (!value || /^[A-Z0-9]+$/i.test(value)) {
+                window.routeKeyboardForceTextInput = false;
+                input.setAttribute('inputmode', 'none');
+            }
+        }, 80);
     }
 
     function hideRouteKeyboard() {
@@ -2352,6 +2393,8 @@ function setSettingsCacheView(showCache) {
         if (!input) return;
         const keyboard = document.getElementById('route-keyboard');
         const keyboardWasOpen = Boolean(keyboard && keyboard.classList.contains('open'));
+        window.routeKeyboardForceTextInput = false;
+        input.setAttribute('inputmode', 'none');
         input.value = '';
         onTab4Search();
         if (keyboardWasOpen) {
@@ -2369,6 +2412,98 @@ function setSettingsCacheView(showCache) {
         window.tab4SearchTimeout = setTimeout(() => updateTab4View(), 140);
     }
 
+
+    function normalizeTab4StationSearchText(value) {
+        return String(value || '')
+            .toUpperCase()
+            .replace(/<BR\s*\/?\s*>/gi, '|')
+            .replace(/\[[^\]]+\]/g, ' ')
+            .replace(/[，,。．·・:：;；()（）\[\]【】{}「」『』<>《》\-—–_\/\\|]/g, ' ')
+            .replace(/\s+/g, '')
+            .trim();
+    }
+
+    async function ensureTab4StopSearchIndexLoaded() {
+        if (Array.isArray(window.tab4StopSearchIndex)) return window.tab4StopSearchIndex;
+        if (window.tab4StopSearchIndexLoading) return window.tab4StopSearchIndexLoading;
+
+        const status = document.getElementById('tab4-source-status');
+        if (status) status.innerText = '載入中途站索引…';
+        setTab4Loading(true);
+        const dayKey = getHongKongServiceDayKey(6);
+        window.tab4StopSearchIndexLoading = fetch(`./data/stop-search-index.json?day=${encodeURIComponent(dayKey)}`, { cache: 'default' })
+            .then(async res => {
+                if (!res.ok) throw new Error(`stop-search-index HTTP ${res.status}`);
+                const data = parseJsonTextSafely(await res.text());
+                window.tab4StopSearchIndex = Array.isArray(data && data.stations) ? data.stations : [];
+                window.tab4StopSearchQueryCache.clear();
+                return window.tab4StopSearchIndex;
+            })
+            .catch(error => {
+                console.warn('Intermediate-stop search index unavailable', error);
+                window.tab4StopSearchIndex = [];
+                return [];
+            })
+            .finally(() => {
+                window.tab4StopSearchIndexLoading = null;
+                setTab4Loading(false);
+                updateTab4SourceStatus();
+            });
+        return window.tab4StopSearchIndexLoading;
+    }
+
+    function getTab4IntermediateStopMatch(query) {
+        const normalized = normalizeTab4StationSearchText(query);
+        if (!normalized || !Array.isArray(window.tab4StopSearchIndex)) {
+            return { tokens: new Set(), gmbCodes: new Set(), matchedStations: 0 };
+        }
+        const cached = window.tab4StopSearchQueryCache.get(normalized);
+        if (cached) return cached;
+
+        const tokens = new Set();
+        const gmbCodes = new Set();
+        let matchedStations = 0;
+        window.tab4StopSearchIndex.forEach(item => {
+            if (!item || !String(item.n || '').includes(normalized) || !Array.isArray(item.r)) return;
+            matchedStations++;
+            item.r.forEach(rawToken => {
+                const token = String(rawToken || '').toUpperCase();
+                if (!token) return;
+                tokens.add(token);
+                const parts = token.split(':');
+                if (parts[0] === 'GMB' && parts[1]) gmbCodes.add(parts[1]);
+            });
+        });
+        const result = { tokens, gmbCodes, matchedStations };
+        window.tab4StopSearchQueryCache.set(normalized, result);
+        return result;
+    }
+
+    function tab4DirMatchesIntermediateStop(dir, match) {
+        if (!dir || !match || !match.tokens || match.tokens.size === 0) return false;
+        const routeCode = String(dir.route || dir.displayRoute || '').toUpperCase();
+        if (!routeCode) return false;
+        if (dir.isGmb) {
+            if (!match.gmbCodes.has(routeCode)) return false;
+            const routeId = String(dir.routeId || '').toUpperCase();
+            // GTFS GMB route_id 與專線小巴 API route_id 對應；有 route_id 時用精確比對，
+            // 避免同一小巴號碼在港島／九龍／新界重覆而誤中。
+            if (routeId) return match.tokens.has(`GMB:${routeCode}:${routeId}`);
+            return true;
+        }
+        if (dir.isCitybus) return match.tokens.has(`CTB:${routeCode}`);
+        return match.tokens.has(`KMB:${routeCode}`);
+    }
+
+    async function enrichGmbStationSearchCandidates(match) {
+        if (!match || match.gmbCodes.size === 0) return;
+        if (window.tab4OperatorFilter !== 'GMB' && window.tab4OperatorFilter !== 'ALL') return;
+        const candidateKeys = Object.keys(window.allRoutesGroupsTab4 || {}).filter(key => {
+            const dirs = window.allRoutesGroupsTab4[key] || [];
+            return dirs.some(d => d.isGmb && match.gmbCodes.has(String(d.route || d.displayRoute || '').toUpperCase()));
+        });
+        if (candidateKeys.length) await ensureGmbDirectionsLoadedForKeys(candidateKeys);
+    }
 
     const TAB4_PAGE_SIZE = 20;
     let tab4EtaObserver = null;
@@ -2431,22 +2566,35 @@ function setSettingsCacheView(showCache) {
 
         let routeNames = Object.keys(window.allRoutesGroupsTab4);
         const q = window.tab4SearchText;
+        const isRouteCodeQuery = Boolean(q && /^[A-Z0-9]+$/.test(q));
+        let intermediateMatch = { tokens: new Set(), gmbCodes: new Set(), matchedStations: 0 };
+
+        if (q && !isRouteCodeQuery) {
+            await ensureTab4StopSearchIndexLoaded();
+            // 使用者可能在索引下載期間已經改咗搜尋字；舊查詢唔應覆蓋新結果。
+            if (q !== window.tab4SearchText) return;
+            intermediateMatch = getTab4IntermediateStopMatch(q);
+            await enrichGmbStationSearchCandidates(intermediateMatch);
+            if (q !== window.tab4SearchText) return;
+            routeNames = Object.keys(window.allRoutesGroupsTab4);
+        }
 
         routeNames = routeNames.filter(r => {
             const dirs = getTab4DirsByOperator(window.allRoutesGroupsTab4[r]);
             if (dirs.length === 0) return false;
             if (!q) return true;
             const displayName = getRouteDisplayNameForTab4(r).toUpperCase();
-            const isRouteCodeQuery = /^[A-Z0-9]+$/.test(q);
             if (isRouteCodeQuery) {
                 // 車號鍵盤輸入採用逐字前綴匹配：第 1 個字對第 1 個字，第 2 個字對第 2 個字，如此類推。
                 return r.toUpperCase().startsWith(q) || displayName.startsWith(q);
             }
-            return r.toUpperCase().includes(q) || displayName.includes(q) || dirs.some(d =>
+            const directTextMatch = r.toUpperCase().includes(q) || displayName.includes(q) || dirs.some(d =>
                 (d.orig_tc && d.orig_tc.includes(q)) ||
                 (d.dest_tc && d.dest_tc.includes(q)) ||
                 (d.operatorName && d.operatorName.includes(q))
             );
+            const intermediateStopMatch = dirs.some(d => tab4DirMatchesIntermediateStop(d, intermediateMatch));
+            return directTextMatch || intermediateStopMatch;
         });
 
         const filteredGroups = {};
@@ -3276,7 +3424,7 @@ function setSettingsCacheView(showCache) {
 
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
         window.addEventListener('load', () => {
-            navigator.serviceWorker.register('./sw.js?v=6.6.0', { updateViaCache: 'none' }).catch(err => {
+            navigator.serviceWorker.register('./sw.js?v=6.7.0', { updateViaCache: 'none' }).catch(err => {
                 console.warn('Service worker registration failed:', err);
             });
         });
