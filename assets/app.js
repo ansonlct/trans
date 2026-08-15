@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '6.7.8';
+const APP_VERSION = '6.7.9';
 
 function renderAppVersion() {
     const el = document.getElementById('app-version-value');
@@ -1336,6 +1336,7 @@ function setSettingsCacheView(showCache) {
     window.routeSearchNativeMode = false;
     window.routeSearchSuggestionTimer = null;
     window.routeSearchBubbleDragging = false;
+    window.tab4GrayNoService = false;
     window.routeEtaStatusTab4 = {};
     window.gmbRouteDetailCache = {};
     window.gmbDirectionsLoadedKeys = {};
@@ -2826,6 +2827,25 @@ function setSettingsCacheView(showCache) {
         return dirs || [];
     }
 
+    const TAB4_GRAY_NO_SERVICE_KEY = 'psk_tab4_gray_no_service_v1';
+
+    function toggleTab4NoServiceGray(enabled, persist = true) {
+        window.tab4GrayNoService = !!enabled;
+        const tab = document.getElementById('tab-4');
+        const toggle = document.getElementById('tab4-gray-no-service-toggle');
+        if (tab) tab.classList.toggle('tab4-gray-no-service', window.tab4GrayNoService);
+        if (toggle && toggle.checked !== window.tab4GrayNoService) toggle.checked = window.tab4GrayNoService;
+        if (persist) {
+            try { localStorage.setItem(TAB4_GRAY_NO_SERVICE_KEY, window.tab4GrayNoService ? '1' : '0'); } catch (e) {}
+        }
+    }
+
+    function initTab4NoServiceGrayToggle() {
+        let enabled = false; // first-use default: OFF
+        try { enabled = localStorage.getItem(TAB4_GRAY_NO_SERVICE_KEY) === '1'; } catch (e) {}
+        toggleTab4NoServiceGray(enabled, false);
+    }
+
     function applyTab4Operator(operator) {
         window.tab4OperatorFilter = operator;
         document.querySelectorAll('#tab-4 .op-btn').forEach(btn => btn.classList.remove('active'));
@@ -2960,6 +2980,8 @@ function setSettingsCacheView(showCache) {
             fab.classList.toggle('hidden', !!open);
             fab.setAttribute('aria-expanded', open ? 'true' : 'false');
         }
+        const backdrop = document.getElementById('route-search-backdrop');
+        if (backdrop) backdrop.setAttribute('aria-hidden', open ? 'false' : 'true');
         document.body.classList.toggle('route-search-open', !!open);
         if (!open) {
             hideRouteKeyboard();
@@ -2989,6 +3011,18 @@ function setSettingsCacheView(showCache) {
         setRouteSearchFloatingOpen(false);
     }
 
+    function syncCustomRouteSearchPosition() {
+        if (!window.routeSearchFloatingOpen || window.routeSearchNativeMode) return;
+        const panel = document.getElementById('route-search-panel');
+        const keyboard = document.getElementById('route-keyboard');
+        if (!panel || !keyboard || !keyboard.classList.contains('open')) return;
+        const rect = keyboard.getBoundingClientRect();
+        const viewportHeight = Math.max(1, Number(window.innerHeight || document.documentElement.clientHeight || 0));
+        const gap = 7;
+        panel.style.top = 'auto';
+        panel.style.bottom = `${Math.max(8, Math.round(viewportHeight - rect.top + gap))}px`;
+    }
+
     function showRouteKeyboard() {
         if (currentTab !== 4) return;
         setRouteSearchFloatingOpen(true);
@@ -3006,6 +3040,16 @@ function setSettingsCacheView(showCache) {
         keyboard.classList.add('open');
         keyboard.setAttribute('aria-hidden', 'false');
         document.body.classList.add('route-keyboard-open');
+        requestAnimationFrame(() => {
+            syncCustomRouteSearchPosition();
+            requestAnimationFrame(syncCustomRouteSearchPosition);
+        });
+        // The keypad itself slides up for ~220 ms. Re-sync after the transition so
+        // the search field finishes directly above the keypad instead of using its
+        // off-screen starting position.
+        const settleSearchStack = () => syncCustomRouteSearchPosition();
+        keyboard.addEventListener('transitionend', settleSearchStack, { once: true });
+        setTimeout(settleSearchStack, 260);
     }
 
     function syncNativeKeyboardOffset() {
@@ -3073,6 +3117,13 @@ function setSettingsCacheView(showCache) {
             keyboard.setAttribute('aria-hidden', 'true');
         }
         document.body.classList.remove('route-keyboard-open');
+        if (!window.routeSearchNativeMode) {
+            const panel = document.getElementById('route-search-panel');
+            if (panel) {
+                panel.style.top = 'auto';
+                panel.style.bottom = 'calc(var(--tab-bar-height) + 18px + env(safe-area-inset-bottom))';
+            }
+        }
     }
 
     function hideRouteSearchSuggestions() {
@@ -3207,16 +3258,21 @@ function setSettingsCacheView(showCache) {
                 placeFab(rect.left, rect.top);
             }
             syncNativeKeyboardOffset();
+            syncCustomRouteSearchPosition();
         });
     }
 
-    // Search closes when tapping elsewhere; tapping inside the panel, keypad or bubble keeps it open.
+    // Search closes when tapping elsewhere. A full-screen backdrop owns outside taps so
+    // the touch/click can never fall through into a route row underneath.
     document.addEventListener('pointerdown', event => {
         if (!window.routeSearchFloatingOpen) return;
         const panel = document.getElementById('route-search-panel');
         const keyboard = document.getElementById('route-keyboard');
         const fab = document.getElementById('route-search-fab');
-        if ((panel && panel.contains(event.target)) || (keyboard && keyboard.contains(event.target)) || event.target === fab) return;
+        const backdrop = document.getElementById('route-search-backdrop');
+        if ((panel && panel.contains(event.target)) || (keyboard && keyboard.contains(event.target)) || event.target === fab || event.target === backdrop) return;
+        event.preventDefault();
+        event.stopPropagation();
         collapseFloatingRouteSearch();
     }, true);
 
@@ -4580,6 +4636,7 @@ function setSettingsCacheView(showCache) {
 
     preventAppZoomAndSelection();
     initFloatingRouteSearch();
+    initTab4NoServiceGrayToggle();
     initSettings();
     renderAppVersion();
 
@@ -4611,7 +4668,7 @@ function setSettingsCacheView(showCache) {
 
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
         window.addEventListener('load', () => {
-            navigator.serviceWorker.register('./sw.js?v=6.7.8', { updateViaCache: 'none' }).catch(err => {
+            navigator.serviceWorker.register('./sw.js?v=6.7.9', { updateViaCache: 'none' }).catch(err => {
                 console.warn('Service worker registration failed:', err);
             });
         });
