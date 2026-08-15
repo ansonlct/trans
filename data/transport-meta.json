@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-08-15T17:07:59.062Z",
+  "updatedAt": "2026-08-15T17:26:01.763Z",
   "serviceDay": "2026-08-15",
   "serviceDayCutoffHKT": "06:00",
   "operatorStatus": {
@@ -114,6 +114,15 @@
       "available": true,
       "fresh": true,
       "stale": false
+    },
+    "route-timetables.json": {
+      "records": 67978,
+      "routeNumbers": 2255,
+      "source": "https://static.data.gov.hk/td/pt-headway-tc/gtfs.zip",
+      "required": false,
+      "available": true,
+      "fresh": true,
+      "stale": false
     }
   },
   "strategies": {
@@ -122,6 +131,7 @@
     "gmbRouteDetail": "lazy-per-route",
     "stopSearch": "daily-gtfs-reverse-index",
     "fares": "daily-compact-gtfs-fare-index",
+    "timetables": "gtfs-published-terminal-departures-and-headways",
     "eta": "always-live"
   }
 }
