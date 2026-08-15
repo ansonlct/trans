@@ -153,9 +153,9 @@ async function buildStopSearchIndex() {
   const workDir = await mkdtemp(join(tmpdir(), 'psk-gtfs-'));
   const zipPath = join(workDir, 'gtfs.zip');
   try {
-    console.log(`stop-search-index.json: downloading GTFS (${gtfsUrl})`);
+    console.log(`stop-search-index.json / route-fares.json: downloading GTFS (${gtfsUrl})`);
     await writeFile(zipPath, await fetchBuffer(gtfsUrl, 3));
-    await execFileAsync('unzip', ['-oq', zipPath, 'routes.txt', 'trips.txt', 'stops.txt', 'stop_times.txt', '-d', workDir], {
+    await execFileAsync('unzip', ['-oq', zipPath, 'routes.txt', 'trips.txt', 'stops.txt', 'stop_times.txt', 'fare_attributes.txt', '-d', workDir], {
       maxBuffer: 1024 * 1024
     });
 
@@ -164,14 +164,29 @@ async function buildStopSearchIndex() {
       const routeId = String(row.route_id || '').trim();
       const routeCode = String(row.route_short_name || '').trim().toUpperCase();
       const operators = gtfsAgencyOperators(row.agency_id);
-      if (routeId && routeCode && operators.length) routeMeta.set(routeId, { routeId, routeCode, operators });
+      if (routeId && routeCode && operators.length) {
+        routeMeta.set(routeId, {
+          routeId,
+          routeCode,
+          operators,
+          routeLongName: String(row.route_long_name || '').trim()
+        });
+      }
     });
 
+    // Keep the GTFS bound from trip_id.  TD defines trip_id as
+    // route-id + route-bound + service-id + departure-time.
     const tripRoute = new Map();
+    const tripRouteBound = new Map();
     await readCsvRows(join(workDir, 'trips.txt'), row => {
       const tripId = String(row.trip_id || '').trim();
       const routeId = String(row.route_id || '').trim();
-      if (tripId && routeMeta.has(routeId)) tripRoute.set(tripId, routeId);
+      if (!tripId || !routeMeta.has(routeId)) return;
+      tripRoute.set(tripId, routeId);
+      const prefix = `${routeId}-`;
+      const rest = tripId.startsWith(prefix) ? tripId.slice(prefix.length) : '';
+      const bound = rest.split('-')[0] || '';
+      if (bound === '1' || bound === '2') tripRouteBound.set(tripId, { routeId, bound });
     });
 
     const stopNames = new Map();
@@ -182,23 +197,31 @@ async function buildStopSearchIndex() {
     });
 
     const stopRoutes = new Map();
+    const routeBoundStopCount = new Map();
     await readCsvRows(join(workDir, 'stop_times.txt'), row => {
+      const tripId = String(row.trip_id || '').trim();
       const stopId = String(row.stop_id || '').trim();
-      if (!stopNames.has(stopId)) return;
-      const routeId = tripRoute.get(String(row.trip_id || '').trim());
+      const routeId = tripRoute.get(tripId);
       const meta = routeMeta.get(routeId);
-      if (!meta) return;
-      let set = stopRoutes.get(stopId);
-      if (!set) {
-        set = new Set();
-        stopRoutes.set(stopId, set);
+      if (meta && stopNames.has(stopId)) {
+        let set = stopRoutes.get(stopId);
+        if (!set) {
+          set = new Set();
+          stopRoutes.set(stopId, set);
+        }
+        for (const operator of meta.operators) {
+          // GMB route numbers can repeat across HKI/KLN/NT. Keep the official
+          // route_id in the token so the client can disambiguate candidates.
+          if (operator === 'GMB') set.add(`${operator}:${meta.routeCode}:${meta.routeId}`);
+          else set.add(`${operator}:${meta.routeCode}`);
+        }
       }
-      for (const operator of meta.operators) {
-        // GMB route numbers can repeat across HKI/KLN/NT.  Keep the official
-        // route_id in the token so the client can disambiguate after loading
-        // that small set of candidate GMB route details.
-        if (operator === 'GMB') set.add(`${operator}:${meta.routeCode}:${meta.routeId}`);
-        else set.add(`${operator}:${meta.routeCode}`);
+
+      const routeBound = tripRouteBound.get(tripId);
+      const seq = Number.parseInt(String(row.stop_sequence || ''), 10);
+      if (routeBound && Number.isFinite(seq) && seq > 0) {
+        const key = `${routeBound.routeId}|${routeBound.bound}`;
+        if (seq > (routeBoundStopCount.get(key) || 0)) routeBoundStopCount.set(key, seq);
       }
     });
 
@@ -239,18 +262,126 @@ async function buildStopSearchIndex() {
     };
     await writeFile('data/stop-search-index.json', JSON.stringify(payload));
     console.log(`stop-search-index.json: ${stations.length} station names; KMB ${operatorStations.KMB.size}, CTB ${operatorStations.CTB.size}, GMB ${operatorStations.GMB.size}`);
-    return { available: true, fresh: true, stats: payload.stats, source: gtfsUrl };
+
+    // Build a much smaller fare index for the browser.  The source fare matrix is
+    // OD-based; the app only needs the fare from each boarding stop to the route's
+    // destination. Prefer a fare whose OFF_SEQ is the GTFS terminal sequence and
+    // otherwise retain the furthest published OFF_SEQ as a safe fallback.
+    const fareChoices = new Map();
+    await readCsvRows(join(workDir, 'fare_attributes.txt'), row => {
+      const fareId = String(row.fare_id || '').trim();
+      const price = Number.parseFloat(String(row.price || '').trim());
+      const currency = String(row.currency_type || 'HKD').trim().toUpperCase();
+      if (!fareId || !Number.isFinite(price) || price < 0 || (currency && currency !== 'HKD')) return;
+
+      const firstDash = fareId.indexOf('-');
+      if (firstDash <= 0) return;
+      const routeId = fareId.slice(0, firstDash);
+      const meta = routeMeta.get(routeId);
+      if (!meta) return;
+      const parts = fareId.slice(firstDash + 1).split('-');
+      if (parts.length < 3) return;
+      const bound = String(parts[0] || '').trim();
+      const onSeq = Number.parseInt(String(parts[1] || ''), 10);
+      const offSeq = Number.parseInt(String(parts[2] || ''), 10);
+      if ((bound !== '1' && bound !== '2') || !Number.isFinite(onSeq) || !Number.isFinite(offSeq)) return;
+
+      const terminalSeq = routeBoundStopCount.get(`${routeId}|${bound}`) || 0;
+      const exactTerminal = terminalSeq > 0 && offSeq === terminalSeq;
+      const key = `${routeId}|${bound}|${onSeq}`;
+      const previous = fareChoices.get(key);
+      if (!previous || (exactTerminal && !previous.exactTerminal) ||
+          (exactTerminal === previous.exactTerminal && offSeq > previous.offSeq)) {
+        fareChoices.set(key, { routeId, bound, onSeq, offSeq, price, exactTerminal });
+      }
+    });
+
+    const fareRoutes = {};
+    for (const choice of fareChoices.values()) {
+      const meta = routeMeta.get(choice.routeId);
+      if (!meta) continue;
+      let routeEntry = fareRoutes[choice.routeId];
+      if (!routeEntry) {
+        routeEntry = fareRoutes[choice.routeId] = {
+          r: meta.routeCode,
+          a: meta.operators,
+          l: meta.routeLongName,
+          d: {}
+        };
+      }
+      let dirEntry = routeEntry.d[choice.bound];
+      if (!dirEntry) {
+        dirEntry = routeEntry.d[choice.bound] = {
+          c: Number(routeBoundStopCount.get(`${choice.routeId}|${choice.bound}`) || 0),
+          f: {}
+        };
+      }
+      dirEntry.f[String(choice.onSeq)] = Number(choice.price.toFixed(2));
+    }
+
+    const fareLookup = {};
+    for (const [routeId, entry] of Object.entries(fareRoutes)) {
+      for (const operator of entry.a || []) {
+        const key = `${operator}:${entry.r}`;
+        if (!fareLookup[key]) fareLookup[key] = [];
+        fareLookup[key].push(routeId);
+      }
+    }
+    Object.values(fareLookup).forEach(ids => ids.sort((a, b) => String(a).localeCompare(String(b))));
+
+    const farePayload = {
+      v: 1,
+      updatedAt: new Date().toISOString(),
+      source: gtfsUrl,
+      routes: fareRoutes,
+      lookup: fareLookup,
+      stats: {
+        routes: Object.keys(fareRoutes).length,
+        stopFares: fareChoices.size
+      }
+    };
+    await writeFile('data/route-fares.json', JSON.stringify(farePayload));
+    console.log(`route-fares.json: ${farePayload.stats.routes} routes; ${farePayload.stats.stopFares} boarding-stop fares`);
+
+    return {
+      available: true,
+      fresh: true,
+      stats: payload.stats,
+      fareStats: farePayload.stats,
+      fareAvailable: true,
+      fareFresh: true,
+      source: gtfsUrl
+    };
   } catch (error) {
     const previousAvailable = await fileExists('data/stop-search-index.json');
-    console.warn(`stop-search-index.json: refresh failed; ${previousAvailable ? 'keeping previous index' : 'no previous index'} (${error.message})`);
+    const previousFareAvailable = await fileExists('data/route-fares.json');
+    console.warn(`GTFS derived indexes: refresh failed; stop search ${previousAvailable ? 'kept' : 'missing'}, fares ${previousFareAvailable ? 'kept' : 'missing'} (${error.message})`);
     let stats = { stationNames: 0, kmbStations: 0, citybusStations: 0, gmbStations: 0 };
+    let fareStats = { routes: 0, stopFares: 0 };
     if (previousAvailable) {
       try {
         const previous = JSON.parse(await readFile('data/stop-search-index.json', 'utf8'));
         stats = { ...stats, ...(previous.stats || {}) };
       } catch {}
     }
-    return { available: previousAvailable, fresh: false, stale: previousAvailable, stats, source: null, error: String(error?.message || error) };
+    if (previousFareAvailable) {
+      try {
+        const previous = JSON.parse(await readFile('data/route-fares.json', 'utf8'));
+        fareStats = { ...fareStats, ...(previous.stats || {}) };
+      } catch {}
+    }
+    return {
+      available: previousAvailable,
+      fresh: false,
+      stale: previousAvailable,
+      stats,
+      fareStats,
+      fareAvailable: previousFareAvailable,
+      fareFresh: false,
+      fareStale: previousFareAvailable,
+      source: null,
+      error: String(error?.message || error)
+    };
   } finally {
     await rm(workDir, { recursive: true, force: true });
   }
@@ -444,6 +575,17 @@ summary['stop-search-index.json'] = {
   ...(stopSearchIndex.error ? { error: stopSearchIndex.error } : {})
 };
 
+summary['route-fares.json'] = {
+  records: Number(stopSearchIndex.fareStats?.stopFares || 0),
+  routeNumbers: Number(stopSearchIndex.fareStats?.routes || 0),
+  source: stopSearchIndex.source,
+  required: false,
+  available: stopSearchIndex.fareAvailable !== false,
+  fresh: stopSearchIndex.fareFresh === true,
+  stale: stopSearchIndex.fareStale === true,
+  ...(stopSearchIndex.error ? { error: stopSearchIndex.error } : {})
+};
+
 function summarizeOperator(files) {
   const entries = files.map(name => summary[name]).filter(Boolean);
   const total = files.length;
@@ -486,6 +628,7 @@ await writeFile('data/transport-meta.json', JSON.stringify({
     citybusRouteStop: 'lazy-per-route-browser-daily-cache',
     gmbRouteDetail: 'lazy-per-route',
     stopSearch: 'daily-gtfs-reverse-index',
+    fares: 'daily-compact-gtfs-fare-index',
     eta: 'always-live'
   }
 }, null, 2) + '\n');

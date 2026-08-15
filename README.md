@@ -1,11 +1,12 @@
-# Transport App v6.7.1
+# Transport App v6.7.2
 
 
-## v6.7.1 Direction / stop inactive display
-- 九巴及城巴路線目錄維持逐方向 ETA 狀態；某一方向確認沒有即時班次後，該方向直接灰階顯示。
-- 路線詳情取消「暫停服務 / 未有班次之車站」獨立分組。
-- 沒有 ETA 的車站保留原本官方站序，直接在原位置灰階並顯示「暫無班次」。
-- 當整個方向均沒有 ETA，詳情頁保留完整車站列表並提示目前此方向沒有營運中的班次。
+## v6.7.2 Fare display / immediate direction status
+- 「巴士/小巴」的九巴及專線小巴路線詳情，於每個車站名稱下方顯示由該站上車至本方向終點的公布車資（`$xx.xx`）；沒有公布上車車資的站顯示 `$--`。
+- 「收藏」同樣在每個收藏車站名稱下方顯示車資；舊收藏會由每日 fare index 自動補回，不需要重新收藏。
+- 每日 GitHub Action 由運輸署 GTFS `fare_attributes.txt` 產生精簡 `data/route-fares.json`，只保留每個上車站到方向終點所需的車資資料。
+- 九巴 / 城巴查詢結果中，畫面內可見的「往 XXX」一顯示便立即重新檢查該方向 ETA；畫面外路線才繼續用 IntersectionObserver 延遲檢查。確認該方向沒有班次後立即灰階。
+- 路線詳情繼續保留完整官方站序；沒有 ETA 的車站原位灰階並顯示「暫無班次」。
 
 
 ## v6.7.0 Intermediate-stop search
@@ -86,6 +87,7 @@ gmb-route-KLN.json
 gmb-route-NT.json
 transport-meta.json
 stop-search-index.json
+route-fares.json
 ```
 
 
