@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-08-15T06:39:41.510Z",
+  "updatedAt": "2026-08-15T06:58:10.174Z",
   "serviceDay": "2026-08-15",
   "serviceDayCutoffHKT": "06:00",
   "operatorStatus": {
@@ -29,11 +29,11 @@
     },
     "citybus": {
       "routeNumbers": 407,
-      "stations": 0
+      "stations": 2261
     },
     "gmb": {
       "routeNumbers": 572,
-      "stations": 0
+      "stations": 4284
     }
   },
   "datasets": {
@@ -96,12 +96,22 @@
       "available": true,
       "fresh": true,
       "stale": false
+    },
+    "stop-search-index.json": {
+      "records": 7681,
+      "stations": 7681,
+      "source": "https://static.data.gov.hk/td/pt-headway-tc/gtfs.zip",
+      "required": false,
+      "available": true,
+      "fresh": true,
+      "stale": false
     }
   },
   "strategies": {
     "kmbRouteStop": "lazy-per-route",
     "citybusRouteStop": "lazy-per-route-browser-daily-cache",
     "gmbRouteDetail": "lazy-per-route",
+    "stopSearch": "daily-gtfs-reverse-index",
     "eta": "always-live"
   }
 }
