@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-08-15T06:58:10.174Z",
+  "updatedAt": "2026-08-15T17:07:59.062Z",
   "serviceDay": "2026-08-15",
   "serviceDayCutoffHKT": "06:00",
   "operatorStatus": {
@@ -105,6 +105,15 @@
       "available": true,
       "fresh": true,
       "stale": false
+    },
+    "route-fares.json": {
+      "records": 61959,
+      "routeNumbers": 2255,
+      "source": "https://static.data.gov.hk/td/pt-headway-tc/gtfs.zip",
+      "required": false,
+      "available": true,
+      "fresh": true,
+      "stale": false
     }
   },
   "strategies": {
@@ -112,6 +121,7 @@
     "citybusRouteStop": "lazy-per-route-browser-daily-cache",
     "gmbRouteDetail": "lazy-per-route",
     "stopSearch": "daily-gtfs-reverse-index",
+    "fares": "daily-compact-gtfs-fare-index",
     "eta": "always-live"
   }
 }
