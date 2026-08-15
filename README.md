@@ -1,4 +1,11 @@
-# Transport App v6.7.5
+# Transport App v6.7.6
+
+## v6.7.6 Daily update conflict fix
+
+- Daily transport JSON is no longer rebased/line-merged after generation.
+- Each run starts from the latest `origin/main`, regenerates `data/`, then pushes.
+- If `main` changes before push, the workflow resets to the new `origin/main` and regenerates (up to 3 attempts), preventing merge conflicts in generated JSON files.
+- Existing workflow concurrency remains enabled so scheduled/manual runs do not write generated data simultaneously.
 
 
 
