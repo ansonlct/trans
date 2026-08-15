@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '6.7.2';
+const APP_VERSION = '6.7.5';
 
 function renderAppVersion() {
     const el = document.getElementById('app-version-value');
@@ -1476,6 +1476,251 @@ function setSettingsCacheView(showCache) {
             const seq = el.getAttribute('data-stop-fare-seq') || '';
             el.textContent = formatFareAmount(fareMap && fareMap[seq]);
         });
+    }
+
+    // ==========================================
+    // 時間表：運輸署 GTFS 公布總站開出時間 / 班次頻率
+    // 固定班次顯示逐班時間；frequencies.txt 只顯示時段 + headway，
+    // 不把頻率資料展開成假精確的逐班時間。
+    // ==========================================
+    let routeTimetableIndexPromise = null;
+    let timetableReturnFocus = null;
+
+    async function loadRouteTimetableIndex() {
+        if (routeTimetableIndexPromise) return routeTimetableIndexPromise;
+        routeTimetableIndexPromise = (async () => {
+            const dayKey = getHongKongServiceDayKey(6);
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 15000);
+            try {
+                const res = await fetch(`./data/route-timetables.json?day=${encodeURIComponent(dayKey)}`, {
+                    signal: controller.signal,
+                    cache: 'default'
+                });
+                if (!res.ok) throw new Error(`Timetable index HTTP ${res.status}`);
+                const data = parseJsonTextSafely(await res.text());
+                if (!data || typeof data !== 'object' || !data.routes || !data.lookup || !data.c || !data.x) {
+                    throw new Error('Timetable index payload invalid');
+                }
+                return data;
+            } finally {
+                clearTimeout(timer);
+            }
+        })().catch(err => {
+            routeTimetableIndexPromise = null;
+            console.warn('Route timetable index unavailable', err);
+            return null;
+        });
+        return routeTimetableIndexPromise;
+    }
+
+    function getTimetableWeekdayIndex(dayKey) {
+        const date = new Date(`${dayKey}T12:00:00+08:00`);
+        const sundayZero = date.getUTCDay();
+        return (sundayZero + 6) % 7; // Monday = 0 ... Sunday = 6
+    }
+
+    function isTimetableServiceActive(index, serviceId, dayKey) {
+        if (!index || !serviceId || !dayKey) return false;
+        const compactDate = String(dayKey).replace(/-/g, '');
+        const exception = index.x && index.x[compactDate] && Number(index.x[compactDate][serviceId]);
+        if (exception === 1) return true;
+        if (exception === 2) return false;
+
+        const calendar = index.c && index.c[serviceId];
+        if (!calendar) return false;
+        if (calendar.s && compactDate < String(calendar.s)) return false;
+        if (calendar.e && compactDate > String(calendar.e)) return false;
+        const weekdayIndex = getTimetableWeekdayIndex(dayKey);
+        return String(calendar.m || '').charAt(weekdayIndex) === '1';
+    }
+
+    function timetableClockMinutes(value) {
+        const m = String(value || '').match(/^(\d{1,2}):(\d{2})$/);
+        if (!m) return Number.POSITIVE_INFINITY;
+        return Number(m[1]) * 60 + Number(m[2]);
+    }
+
+    function formatTimetableClock(value) {
+        const m = String(value || '').match(/^(\d{1,2}):(\d{2})$/);
+        if (!m) return escapeHtml(String(value || ''));
+        const hour = Number(m[1]);
+        const minute = Number(m[2]);
+        if (hour >= 24) {
+            return `${String(hour % 24).padStart(2, '0')}:${String(minute).padStart(2, '0')}<span class="timetable-next-day">翌日</span>`;
+        }
+        return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+    }
+
+    function formatTimetableHeadway(seconds) {
+        const n = Number(seconds);
+        if (!Number.isFinite(n) || n <= 0) return '';
+        if (n < 60) return `每 ${Math.round(n)} 秒`;
+        const minutes = n / 60;
+        return Number.isInteger(minutes) ? `每 ${minutes} 分鐘` : `每 ${minutes.toFixed(1)} 分鐘`;
+    }
+
+    function chooseTimetableRoute(index, {
+        route, bound, dest, isCitybus, isGmb, gmbRouteId, gmbRouteSeq, stopCount
+    }) {
+        if (!index || !index.routes) return null;
+        const routeCode = String(route || '').trim().toUpperCase();
+        const operator = getFareOperatorCode({ isCitybus, isGmb });
+        const expectedBoundNo = getFareBoundNumber({ bound, isGmb, gmbRouteSeq });
+        const boundCandidates = expectedBoundNo === '2' ? ['2', '1'] : ['1', '2'];
+        let routeIds = [];
+
+        if (isGmb && gmbRouteId && index.routes[String(gmbRouteId)]) {
+            routeIds = [String(gmbRouteId)];
+        } else {
+            routeIds = (index.lookup && index.lookup[`${operator}:${routeCode}`]) || [];
+        }
+
+        const normalizedDest = normalizeFareMatchText(dest);
+        let best = null;
+        let bestScore = -Infinity;
+        routeIds.forEach(routeId => {
+            const entry = index.routes[String(routeId)];
+            if (!entry || !entry.d) return;
+            boundCandidates.forEach(boundNo => {
+                const dir = entry.d[boundNo];
+                if (!dir || !dir.s) return;
+                let score = boundNo === expectedBoundNo ? 40 : 0;
+                const count = Number(stopCount || 0);
+                const officialCount = Number(dir.c || 0);
+                if (count > 0 && officialCount > 0) {
+                    if (count === officialCount) score += 100;
+                    else score -= Math.min(60, Math.abs(count - officialCount) * 5);
+                }
+                if (normalizedDest) {
+                    const longName = normalizeFareMatchText(entry.l);
+                    if (longName && longName.includes(normalizedDest)) score += 25;
+                }
+                if (String(entry.r || '').toUpperCase() === routeCode) score += 10;
+                if (score > bestScore) {
+                    bestScore = score;
+                    best = { routeId: String(routeId), entry, dir, boundNo };
+                }
+            });
+        });
+        return best;
+    }
+
+    async function getRouteTimetable(params) {
+        const index = await loadRouteTimetableIndex();
+        if (!index) return { unavailable: true };
+        const chosen = chooseTimetableRoute(index, params || {});
+        if (!chosen || !chosen.dir || !chosen.dir.s) return { notFound: true, index };
+
+        const dayKey = getHongKongServiceDayKey(6);
+        const fixed = new Set();
+        const ranges = new Map();
+        const activeServices = [];
+        for (const [serviceId, schedule] of Object.entries(chosen.dir.s)) {
+            if (!isTimetableServiceActive(index, serviceId, dayKey)) continue;
+            activeServices.push(serviceId);
+            (schedule.t || []).forEach(time => fixed.add(String(time)));
+            (schedule.f || []).forEach(range => {
+                if (!Array.isArray(range) || range.length < 3) return;
+                ranges.set(`${range[0]}|${range[1]}|${range[2]}`, [String(range[0]), String(range[1]), Number(range[2])]);
+            });
+        }
+
+        const times = [...fixed].sort((a, b) => timetableClockMinutes(a) - timetableClockMinutes(b));
+        const frequencyRanges = [...ranges.values()].sort((a, b) =>
+            timetableClockMinutes(a[0]) - timetableClockMinutes(b[0]) ||
+            timetableClockMinutes(a[1]) - timetableClockMinutes(b[1]) ||
+            Number(a[2]) - Number(b[2])
+        );
+        return {
+            dayKey,
+            times,
+            frequencyRanges,
+            activeServices,
+            routeId: chosen.routeId,
+            boundNo: chosen.boundNo,
+            sourceUpdatedAt: index.updatedAt || ''
+        };
+    }
+
+    function formatTimetableServiceDate(dayKey) {
+        const m = String(dayKey || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (!m) return String(dayKey || '');
+        const labels = ['日','一','二','三','四','五','六'];
+        const date = new Date(`${dayKey}T12:00:00+08:00`);
+        return `${Number(m[2])}月${Number(m[3])}日（星期${labels[date.getUTCDay()]}）`;
+    }
+
+    function openTimetableModalShell(ctx) {
+        const overlay = document.getElementById('timetable-overlay');
+        const modal = document.getElementById('timetable-modal');
+        const title = document.getElementById('timetable-title');
+        const subtitle = document.getElementById('timetable-subtitle');
+        const content = document.getElementById('timetable-content');
+        if (!overlay || !modal || !content) return false;
+        timetableReturnFocus = document.activeElement;
+        if (title) title.textContent = `${ctx.route || ''} 時間表`;
+        if (subtitle) subtitle.textContent = ctx.dest ? `往 ${ctx.dest}` : '';
+        content.innerHTML = '<div class="timetable-loading">載入官方時間表…</div>';
+        overlay.classList.add('open');
+        modal.classList.add('open');
+        requestAnimationFrame(() => {
+            const closeBtn = modal.querySelector('.timetable-close-btn');
+            if (closeBtn) closeBtn.focus({ preventScroll: true });
+        });
+        return true;
+    }
+
+    function closeRouteTimetable() {
+        const overlay = document.getElementById('timetable-overlay');
+        const modal = document.getElementById('timetable-modal');
+        if (overlay) overlay.classList.remove('open');
+        if (modal) modal.classList.remove('open');
+        if (timetableReturnFocus && typeof timetableReturnFocus.focus === 'function') {
+            timetableReturnFocus.focus({ preventScroll: true });
+        }
+        timetableReturnFocus = null;
+    }
+
+    async function showRouteTimetable() {
+        const ctx = window.tab4DetailContext;
+        if (!ctx || !openTimetableModalShell(ctx)) return;
+        const content = document.getElementById('timetable-content');
+        try {
+            const data = await getRouteTimetable(ctx);
+            if (!content || !document.getElementById('timetable-modal')?.classList.contains('open')) return;
+            if (data.unavailable) {
+                content.innerHTML = '<div class="timetable-empty">時間表資料尚未建立。<br><span>部署後請執行一次每日交通資料更新。</span></div>';
+                return;
+            }
+            if (data.notFound) {
+                content.innerHTML = '<div class="timetable-empty">未能配對此方向的官方時間表。</div>';
+                return;
+            }
+
+            let html = `<div class="timetable-date">服務日：${escapeHtml(formatTimetableServiceDate(data.dayKey))}<span>總站開出</span></div>`;
+            if (!data.times.length && !data.frequencyRanges.length) {
+                html += '<div class="timetable-empty">今日沒有公布的總站開出班次。</div>';
+            } else {
+                if (data.times.length) {
+                    html += '<section class="timetable-section"><h3>固定開出時間</h3><div class="timetable-time-grid">';
+                    data.times.forEach(time => { html += `<div class="timetable-time-chip">${formatTimetableClock(time)}</div>`; });
+                    html += '</div></section>';
+                }
+                if (data.frequencyRanges.length) {
+                    html += '<section class="timetable-section"><h3>班次頻率</h3><div class="timetable-frequency-list">';
+                    data.frequencyRanges.forEach(([start, end, headway]) => {
+                        html += `<div class="timetable-frequency-row"><span class="timetable-frequency-time">${formatTimetableClock(start)}–${formatTimetableClock(end)}</span><span>${escapeHtml(formatTimetableHeadway(headway))}</span></div>`;
+                    });
+                    html += '</div></section>';
+                }
+            }
+            html += '<div class="timetable-note">資料為運輸署公布時間表；實際開車時間可能因交通或營運調動而有差異。凌晨 06:00 前會按前一服務日顯示，以配合跨午夜的 24:xx／25:xx 班次。</div>';
+            content.innerHTML = html;
+        } catch (err) {
+            console.warn('Show route timetable failed', err);
+            if (content) content.innerHTML = '<div class="timetable-empty">暫時無法載入時間表，請稍後再試。</div>';
+        }
     }
 
     // ==========================================
@@ -3139,9 +3384,12 @@ function setSettingsCacheView(showCache) {
         if (dirs[0] && dirs[0].isGmb) operatorText = dirs[0].operatorName || '專線小巴';
         if (!(dirs[0] && dirs[0].isGmb) && ['112','116','118','102','104','111','115','115P','117','171','601','603','619','671','680','681','690','904','905','907D','914','930','948','962','969'].includes(displayRouteName)) operatorText = '城巴+九巴';
 
-        let badgeColor = 'var(--text-main)'; 
-        if (operatorText.includes('龍運')) badgeColor = '#E67E22'; 
-        if (operatorText.includes('城巴')) badgeColor = '#F1C40F';
+        // Route number colour follows the operator identity. KMB (including
+        // joint KMB/Citybus routes) is red; LWB remains orange, Citybus yellow,
+        // and GMB green.
+        let badgeColor = operatorText.includes('九巴') ? 'var(--kmb-red)' : 'var(--text-main)';
+        if (operatorText.includes('龍運')) badgeColor = '#E67E22';
+        if (operatorText === '城巴') badgeColor = '#F1C40F';
         if (operatorText.includes('小巴')) badgeColor = 'var(--gmb-green)';
 
         function makeDirBlock(dir) {
@@ -3420,10 +3668,6 @@ function setSettingsCacheView(showCache) {
         });
         html += '</div>';
 
-        if (activeCount === 0) {
-            html += '<div class="status-msg" style="padding:16px 20px 0;">目前此方向沒有營運中的班次。</div>';
-        }
-
         html += '</div>';
         container.innerHTML = html;
         refreshFavoriteButtonStates();
@@ -3502,6 +3746,17 @@ function setSettingsCacheView(showCache) {
             }
 
             if (!isCurrentRequest()) return;
+
+            // Keep the timetable context aligned with the direction that was actually
+            // resolved (especially GMB route_id/route_seq) and include the official
+            // stop count as an extra guard against O/I vs GTFS bound mismatches.
+            if (!isTab3) {
+                updateTab4OppositeDirectionButton({
+                    route, bound, dest: resolvedDestForFavorites, isCitybus: !!isCitybus, isGmb: !!isGmb,
+                    gmbRegion: resolvedGmbRegionForFavorites, gmbRouteId: resolvedGmbRouteIdForFavorites,
+                    gmbRouteSeq: resolvedGmbRouteSeqForFavorites, badgeColor, stopCount: stops.length
+                });
+            }
 
             // Fare lookup is static and independent of ETA. Start it immediately,
             // but do not block the stop list. When ready, update the fare labels in-place.
@@ -3666,7 +3921,7 @@ function setSettingsCacheView(showCache) {
 
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
         window.addEventListener('load', () => {
-            navigator.serviceWorker.register('./sw.js?v=6.7.2', { updateViaCache: 'none' }).catch(err => {
+            navigator.serviceWorker.register('./sw.js?v=6.7.5', { updateViaCache: 'none' }).catch(err => {
                 console.warn('Service worker registration failed:', err);
             });
         });

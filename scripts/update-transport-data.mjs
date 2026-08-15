@@ -139,6 +139,29 @@ function normalizeStopSearchText(value) {
     .trim();
 }
 
+function normalizeGtfsClock(value) {
+  const m = String(value || '').trim().match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if (!m) return '';
+  const hour = Number.parseInt(m[1], 10);
+  const minute = Number.parseInt(m[2], 10);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute) || hour < 0 || hour > 47 || minute < 0 || minute > 59) return '';
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
+function compareGtfsClock(a, b) {
+  const toMinutes = value => {
+    const [h, m] = String(value || '').split(':').map(Number);
+    return (Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0);
+  };
+  return toMinutes(a) - toMinutes(b);
+}
+
+function tripDepartureFromId(tripId) {
+  const m = String(tripId || '').match(/-(\d{4})$/);
+  if (!m) return '';
+  return normalizeGtfsClock(`${m[1].slice(0, 2)}:${m[1].slice(2)}:00`);
+}
+
 function gtfsAgencyOperators(agencyId) {
   const id = String(agencyId || '').trim().toUpperCase();
   if (id === 'KMB' || id === 'LWB') return ['KMB'];
@@ -153,9 +176,9 @@ async function buildStopSearchIndex() {
   const workDir = await mkdtemp(join(tmpdir(), 'psk-gtfs-'));
   const zipPath = join(workDir, 'gtfs.zip');
   try {
-    console.log(`stop-search-index.json / route-fares.json: downloading GTFS (${gtfsUrl})`);
+    console.log(`GTFS indexes (stop search / fares / timetables): downloading ${gtfsUrl}`);
     await writeFile(zipPath, await fetchBuffer(gtfsUrl, 3));
-    await execFileAsync('unzip', ['-oq', zipPath, 'routes.txt', 'trips.txt', 'stops.txt', 'stop_times.txt', 'fare_attributes.txt', '-d', workDir], {
+    await execFileAsync('unzip', ['-oq', zipPath, 'routes.txt', 'trips.txt', 'stops.txt', 'stop_times.txt', 'fare_attributes.txt', 'frequencies.txt', 'calendar.txt', 'calendar_dates.txt', '-d', workDir], {
       maxBuffer: 1024 * 1024
     });
 
@@ -178,15 +201,20 @@ async function buildStopSearchIndex() {
     // route-id + route-bound + service-id + departure-time.
     const tripRoute = new Map();
     const tripRouteBound = new Map();
+    const referencedServiceIds = new Set();
     await readCsvRows(join(workDir, 'trips.txt'), row => {
       const tripId = String(row.trip_id || '').trim();
       const routeId = String(row.route_id || '').trim();
+      const serviceId = String(row.service_id || '').trim();
       if (!tripId || !routeMeta.has(routeId)) return;
       tripRoute.set(tripId, routeId);
       const prefix = `${routeId}-`;
       const rest = tripId.startsWith(prefix) ? tripId.slice(prefix.length) : '';
       const bound = rest.split('-')[0] || '';
-      if (bound === '1' || bound === '2') tripRouteBound.set(tripId, { routeId, bound });
+      if (bound === '1' || bound === '2') {
+        tripRouteBound.set(tripId, { routeId, bound, serviceId });
+        if (serviceId) referencedServiceIds.add(serviceId);
+      }
     });
 
     const stopNames = new Map();
@@ -198,6 +226,7 @@ async function buildStopSearchIndex() {
 
     const stopRoutes = new Map();
     const routeBoundStopCount = new Map();
+    const tripTerminalDeparture = new Map();
     await readCsvRows(join(workDir, 'stop_times.txt'), row => {
       const tripId = String(row.trip_id || '').trim();
       const stopId = String(row.stop_id || '').trim();
@@ -222,6 +251,10 @@ async function buildStopSearchIndex() {
       if (routeBound && Number.isFinite(seq) && seq > 0) {
         const key = `${routeBound.routeId}|${routeBound.bound}`;
         if (seq > (routeBoundStopCount.get(key) || 0)) routeBoundStopCount.set(key, seq);
+        if (seq === 1 && !tripTerminalDeparture.has(tripId)) {
+          const departure = normalizeGtfsClock(row.departure_time || row.arrival_time);
+          if (departure) tripTerminalDeparture.set(tripId, departure);
+        }
       }
     });
 
@@ -343,6 +376,133 @@ async function buildStopSearchIndex() {
     await writeFile('data/route-fares.json', JSON.stringify(farePayload));
     console.log(`route-fares.json: ${farePayload.stats.routes} routes; ${farePayload.stats.stopFares} boarding-stop fares`);
 
+    // Build a compact timetable index. Fixed trips use the published departure
+    // time at stop_sequence 1. Trips represented by frequencies.txt are kept as
+    // time ranges + headway instead of being expanded into invented departures.
+    const tripFrequencyRanges = new Map();
+    await readCsvRows(join(workDir, 'frequencies.txt'), row => {
+      const tripId = String(row.trip_id || '').trim();
+      if (!tripRouteBound.has(tripId)) return;
+      const start = normalizeGtfsClock(row.start_time);
+      const end = normalizeGtfsClock(row.end_time);
+      const headway = Number.parseInt(String(row.headway_secs || ''), 10);
+      if (!start || !end || !Number.isFinite(headway) || headway <= 0) return;
+      let ranges = tripFrequencyRanges.get(tripId);
+      if (!ranges) {
+        ranges = [];
+        tripFrequencyRanges.set(tripId, ranges);
+      }
+      ranges.push([start, end, headway]);
+    });
+
+    const serviceCalendar = {};
+    await readCsvRows(join(workDir, 'calendar.txt'), row => {
+      const serviceId = String(row.service_id || '').trim();
+      if (!serviceId || !referencedServiceIds.has(serviceId)) return;
+      const mask = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday']
+        .map(key => String(row[key] || '0') === '1' ? '1' : '0').join('');
+      serviceCalendar[serviceId] = {
+        m: mask,
+        s: String(row.start_date || '').trim(),
+        e: String(row.end_date || '').trim()
+      };
+    });
+
+    const serviceExceptions = {};
+    await readCsvRows(join(workDir, 'calendar_dates.txt'), row => {
+      const serviceId = String(row.service_id || '').trim();
+      const date = String(row.date || '').trim();
+      const exceptionType = Number.parseInt(String(row.exception_type || ''), 10);
+      if (!serviceId || !referencedServiceIds.has(serviceId) || !/^\d{8}$/.test(date) || (exceptionType !== 1 && exceptionType !== 2)) return;
+      if (!serviceExceptions[date]) serviceExceptions[date] = {};
+      serviceExceptions[date][serviceId] = exceptionType;
+    });
+
+    const timetableRoutes = {};
+    let fixedDepartureCount = 0;
+    let frequencyRangeCount = 0;
+    for (const [tripId, trip] of tripRouteBound) {
+      const meta = routeMeta.get(trip.routeId);
+      if (!meta || !trip.serviceId) continue;
+      let routeEntry = timetableRoutes[trip.routeId];
+      if (!routeEntry) {
+        routeEntry = timetableRoutes[trip.routeId] = {
+          r: meta.routeCode,
+          a: meta.operators,
+          l: meta.routeLongName,
+          d: {}
+        };
+      }
+      let dirEntry = routeEntry.d[trip.bound];
+      if (!dirEntry) {
+        dirEntry = routeEntry.d[trip.bound] = {
+          c: Number(routeBoundStopCount.get(`${trip.routeId}|${trip.bound}`) || 0),
+          s: {}
+        };
+      }
+      let serviceEntry = dirEntry.s[trip.serviceId];
+      if (!serviceEntry) serviceEntry = dirEntry.s[trip.serviceId] = { t: [], f: [] };
+
+      const frequencyRanges = tripFrequencyRanges.get(tripId);
+      if (frequencyRanges && frequencyRanges.length) {
+        for (const range of frequencyRanges) {
+          serviceEntry.f.push(range);
+          frequencyRangeCount++;
+        }
+      } else {
+        const departure = tripTerminalDeparture.get(tripId) || tripDepartureFromId(tripId);
+        if (departure) {
+          serviceEntry.t.push(departure);
+          fixedDepartureCount++;
+        }
+      }
+    }
+
+    // Deduplicate times/ranges because several GTFS trips can describe the same
+    // public departure pattern. Remove empty service/direction/route records.
+    for (const [routeId, routeEntry] of Object.entries(timetableRoutes)) {
+      for (const [bound, dirEntry] of Object.entries(routeEntry.d || {})) {
+        for (const [serviceId, serviceEntry] of Object.entries(dirEntry.s || {})) {
+          serviceEntry.t = [...new Set(serviceEntry.t || [])].sort(compareGtfsClock);
+          const rangeMap = new Map();
+          for (const range of serviceEntry.f || []) rangeMap.set(`${range[0]}|${range[1]}|${range[2]}`, range);
+          serviceEntry.f = [...rangeMap.values()].sort((a, b) => compareGtfsClock(a[0], b[0]) || compareGtfsClock(a[1], b[1]) || a[2] - b[2]);
+          if (!serviceEntry.t.length) delete serviceEntry.t;
+          if (!serviceEntry.f.length) delete serviceEntry.f;
+          if (!serviceEntry.t && !serviceEntry.f) delete dirEntry.s[serviceId];
+        }
+        if (!Object.keys(dirEntry.s || {}).length) delete routeEntry.d[bound];
+      }
+      if (!Object.keys(routeEntry.d || {}).length) delete timetableRoutes[routeId];
+    }
+
+    const timetableLookup = {};
+    for (const [routeId, entry] of Object.entries(timetableRoutes)) {
+      for (const operator of entry.a || []) {
+        const key = `${operator}:${entry.r}`;
+        if (!timetableLookup[key]) timetableLookup[key] = [];
+        timetableLookup[key].push(routeId);
+      }
+    }
+    Object.values(timetableLookup).forEach(ids => ids.sort((a, b) => String(a).localeCompare(String(b))));
+
+    const timetablePayload = {
+      v: 1,
+      updatedAt: new Date().toISOString(),
+      source: gtfsUrl,
+      routes: timetableRoutes,
+      lookup: timetableLookup,
+      c: serviceCalendar,
+      x: serviceExceptions,
+      stats: {
+        routes: Object.keys(timetableRoutes).length,
+        fixedDepartures: fixedDepartureCount,
+        frequencyRanges: frequencyRangeCount
+      }
+    };
+    await writeFile('data/route-timetables.json', JSON.stringify(timetablePayload));
+    console.log(`route-timetables.json: ${timetablePayload.stats.routes} routes; ${fixedDepartureCount} fixed departures; ${frequencyRangeCount} frequency ranges`);
+
     return {
       available: true,
       fresh: true,
@@ -350,14 +510,19 @@ async function buildStopSearchIndex() {
       fareStats: farePayload.stats,
       fareAvailable: true,
       fareFresh: true,
+      timetableStats: timetablePayload.stats,
+      timetableAvailable: true,
+      timetableFresh: true,
       source: gtfsUrl
     };
   } catch (error) {
     const previousAvailable = await fileExists('data/stop-search-index.json');
     const previousFareAvailable = await fileExists('data/route-fares.json');
-    console.warn(`GTFS derived indexes: refresh failed; stop search ${previousAvailable ? 'kept' : 'missing'}, fares ${previousFareAvailable ? 'kept' : 'missing'} (${error.message})`);
+    const previousTimetableAvailable = await fileExists('data/route-timetables.json');
+    console.warn(`GTFS derived indexes: refresh failed; stop search ${previousAvailable ? 'kept' : 'missing'}, fares ${previousFareAvailable ? 'kept' : 'missing'}, timetables ${previousTimetableAvailable ? 'kept' : 'missing'} (${error.message})`);
     let stats = { stationNames: 0, kmbStations: 0, citybusStations: 0, gmbStations: 0 };
     let fareStats = { routes: 0, stopFares: 0 };
+    let timetableStats = { routes: 0, fixedDepartures: 0, frequencyRanges: 0 };
     if (previousAvailable) {
       try {
         const previous = JSON.parse(await readFile('data/stop-search-index.json', 'utf8'));
@@ -370,6 +535,12 @@ async function buildStopSearchIndex() {
         fareStats = { ...fareStats, ...(previous.stats || {}) };
       } catch {}
     }
+    if (previousTimetableAvailable) {
+      try {
+        const previous = JSON.parse(await readFile('data/route-timetables.json', 'utf8'));
+        timetableStats = { ...timetableStats, ...(previous.stats || {}) };
+      } catch {}
+    }
     return {
       available: previousAvailable,
       fresh: false,
@@ -379,6 +550,10 @@ async function buildStopSearchIndex() {
       fareAvailable: previousFareAvailable,
       fareFresh: false,
       fareStale: previousFareAvailable,
+      timetableStats,
+      timetableAvailable: previousTimetableAvailable,
+      timetableFresh: false,
+      timetableStale: previousTimetableAvailable,
       source: null,
       error: String(error?.message || error)
     };
@@ -586,6 +761,17 @@ summary['route-fares.json'] = {
   ...(stopSearchIndex.error ? { error: stopSearchIndex.error } : {})
 };
 
+summary['route-timetables.json'] = {
+  records: Number(stopSearchIndex.timetableStats?.fixedDepartures || 0) + Number(stopSearchIndex.timetableStats?.frequencyRanges || 0),
+  routeNumbers: Number(stopSearchIndex.timetableStats?.routes || 0),
+  source: stopSearchIndex.source,
+  required: false,
+  available: stopSearchIndex.timetableAvailable !== false,
+  fresh: stopSearchIndex.timetableFresh === true,
+  stale: stopSearchIndex.timetableStale === true,
+  ...(stopSearchIndex.error ? { error: stopSearchIndex.error } : {})
+};
+
 function summarizeOperator(files) {
   const entries = files.map(name => summary[name]).filter(Boolean);
   const total = files.length;
@@ -629,6 +815,7 @@ await writeFile('data/transport-meta.json', JSON.stringify({
     gmbRouteDetail: 'lazy-per-route',
     stopSearch: 'daily-gtfs-reverse-index',
     fares: 'daily-compact-gtfs-fare-index',
+    timetables: 'gtfs-published-terminal-departures-and-headways',
     eta: 'always-live'
   }
 }, null, 2) + '\n');

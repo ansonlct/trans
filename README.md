@@ -1,5 +1,27 @@
-# Transport App v6.7.2
+# Transport App v6.7.5
 
+
+
+
+## v6.7.5 Route timetable
+
+- In **巴士/小巴**, open any `往 XXXX` direction and tap **時間表** to view the published terminal departure timetable for that direction.
+- Fixed GTFS trips are shown as individual terminal departure times.
+- GTFS `frequencies.txt` services are shown as a time range plus headway (for example, `07:00–09:00 每 8 分鐘`) instead of inventing exact departures.
+- The timetable automatically selects the current Hong Kong service day using `calendar.txt` and `calendar_dates.txt`, including public-holiday exceptions.
+- The daily data workflow now also generates `data/route-timetables.json` from the Transport Department GTFS feed.
+- Timetable direction matching uses operator, route number, bound, destination, official stop count, and the exact GMB route ID when available.
+
+## v6.7.4 KMB route colour + quiet no-service detail
+
+- KMB route numbers are now shown in KMB red in the route search/list and detail view.
+- Removed the extra direction-level no-service sentence; unavailable stops remain grey in-place.
+
+## v6.7.3 GitHub Actions Node 24 compatibility
+
+- GitHub Actions upgraded to `actions/checkout@v7` and `actions/setup-node@v7`.
+- Workflow Node.js runtime upgraded from 20 to 24 to remove the Node.js 20 deprecation warning.
+- Includes the v6.7.2 fare display and immediate direction-status changes.
 
 ## v6.7.2 Fare display / immediate direction status
 - 「巴士/小巴」的九巴及專線小巴路線詳情，於每個車站名稱下方顯示由該站上車至本方向終點的公布車資（`$xx.xx`）；沒有公布上車車資的站顯示 `$--`。
