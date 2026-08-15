@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '6.2.0';
+const APP_VERSION = '6.3.0';
 
 function renderAppVersion() {
     const el = document.getElementById('app-version-value');
@@ -9,21 +9,45 @@ function renderAppVersion() {
 
 let settingsReturnFocus = null;
 
-function openSettings() {
+function setSettingsCacheView(showCache) {
+        const modal = document.getElementById('settings-modal');
+        if (!modal) return;
+        modal.querySelectorAll('.settings-main-item').forEach(el => { el.hidden = !!showCache; });
+        const panel = document.getElementById('cache-status-panel');
+        if (panel) panel.hidden = !showCache;
+        const backBtn = document.getElementById('settings-back-btn');
+        if (backBtn) backBtn.hidden = !showCache;
+        const title = document.getElementById('settings-title');
+        if (title) title.textContent = showCache ? '快取狀態' : '設定';
+    }
+
+    function openSettings() {
         settingsReturnFocus = document.activeElement;
         document.getElementById('modal-overlay').classList.add('open');
         const modal = document.getElementById('settings-modal');
         modal.classList.add('open');
+        setSettingsCacheView(false);
         renderAppVersion();
-        refreshCacheIndicators();
         requestAnimationFrame(() => {
             const closeButton = modal.querySelector('.close-btn');
             if (closeButton) closeButton.focus({ preventScroll: true });
         });
     }
+    function openCacheStatus() {
+        setSettingsCacheView(true);
+        refreshCacheIndicators(false);
+        requestAnimationFrame(() => {
+            const backButton = document.getElementById('settings-back-btn');
+            if (backButton) backButton.focus({ preventScroll: true });
+        });
+    }
+    function closeCacheStatus() {
+        setSettingsCacheView(false);
+    }
     function closeSettings() {
         document.getElementById('modal-overlay').classList.remove('open');
         document.getElementById('settings-modal').classList.remove('open');
+        setSettingsCacheView(false);
         if (settingsReturnFocus && typeof settingsReturnFocus.focus === 'function') {
             settingsReturnFocus.focus({ preventScroll: true });
         }
@@ -915,15 +939,23 @@ function openSettings() {
                 return stops;
             } else {
                 const boundCode = bound === 'outbound' ? 'O' : 'I';
-                try { await ensureKmbStopNamesLoaded(); } catch(e) { console.warn('KMB stop names failed, using stop IDs as fallback', e); }
+                const stopNamesPromise = ensureKmbStopNamesLoaded().catch(e => {
+                    console.warn('KMB stop names failed, using stop IDs as fallback', e);
+                    return [];
+                });
 
                 if (window.globalRouteStops) {
+                    await stopNamesPromise;
                     const stops = enrichKmbRouteStopList(getKmbStopsFromIndex(route, boundCode));
                     window.routeStopsCache[key] = stops;
                     return stops;
                 }
 
-                const data = await fetchJsonCached(`https://data.etabus.gov.hk/v1/transport/kmb/route-stop/${route}/${bound}/1`, { ttl: 86400000, timeout: 10000 });
+                // Fetch the selected route-stop list and the daily global stop-name
+                // index in parallel. Previously these were serial, making first entry
+                // into a KMB route noticeably slower even when the daily cache existed.
+                const routeStopsPromise = fetchJsonCached(`https://data.etabus.gov.hk/v1/transport/kmb/route-stop/${route}/${bound}/1`, { ttl: 86400000, timeout: 10000 });
+                const [data] = await Promise.all([routeStopsPromise, stopNamesPromise]);
                 window.routeStopsCache[key] = enrichKmbRouteStopList(data.data || []);
                 return window.routeStopsCache[key];
             }
@@ -1617,7 +1649,7 @@ function openSettings() {
     async function getGmbRouteDetailByCode(region, routeCode) {
         const cacheKey = `${region}-${routeCode}`;
         if (window.gmbRouteDetailCache[cacheKey]) return window.gmbRouteDetailCache[cacheKey];
-        const data = await fetchJsonCached(`https://data.etagmb.gov.hk/route/${encodeURIComponent(region)}/${encodeURIComponent(routeCode)}`, { ttl: 3600000, timeout: 10000 });
+        const data = await fetchJsonCached(`https://data.etagmb.gov.hk/route/${encodeURIComponent(region)}/${encodeURIComponent(routeCode)}`, { ttl: 86400000, timeout: 10000 });
         const routes = flattenGmbRouteItems(data);
         window.gmbRouteDetailCache[cacheKey] = routes;
         return routes;
@@ -1658,7 +1690,7 @@ function openSettings() {
         const cacheKey = `GMB-STOPS-${routeId}-${routeSeq}`;
         if (window.routeStopsCache[cacheKey]) return window.routeStopsCache[cacheKey];
 
-        const stopData = await fetchJsonCached(`https://data.etagmb.gov.hk/route-stop/${encodeURIComponent(routeId)}/${encodeURIComponent(routeSeq)}`, { ttl: 3600000, timeout: 10000 });
+        const stopData = await fetchJsonCached(`https://data.etagmb.gov.hk/route-stop/${encodeURIComponent(routeId)}/${encodeURIComponent(routeSeq)}`, { ttl: 86400000, timeout: 10000 });
         const rawStops = (stopData.data && stopData.data.route_stops) ? stopData.data.route_stops : (Array.isArray(stopData.data) ? stopData.data : []);
         const stops = rawStops.map((s, idx) => {
             const stopId = getGmbText(s.stop_id, s.stop, s.id, s.name_tc, `gmb-${routeId}-${routeSeq}-${idx + 1}`);
@@ -2415,8 +2447,9 @@ function openSettings() {
                 if (isTab4DirEtaStatusFresh(statusKey, 15000)) return;
 
                 if (dir.isGmb) {
-                    if (dir.needsGmbDetail || !dir.routeId || !dir.routeSeq || /點擊載入方向資料|詳情|^方向\s*\d+$/.test(String(dir.dest_tc || ''))) return;
-                    gmbItems.push({ rName, dir, statusKey });
+                    // GMB has no cheap route-level ETA endpoint. Do not probe every
+                    // stop from the directory; it delays the route the user actually opens.
+                    return;
                 } else if (dir.isCitybus) {
                     ctbItems.push({ rName, dir, statusKey });
                 } else {
@@ -2427,7 +2460,6 @@ function openSettings() {
 
         if (kmbRoutes.size) fetchAndApplyEtaTab4([...kmbRoutes]);
         if (ctbItems.length) fetchAndApplyCitybusEtaTab4(ctbItems);
-        if (gmbItems.length) fetchAndApplyGmbEtaTab4(gmbItems);
     }
 
 
@@ -2755,8 +2787,131 @@ function openSettings() {
     // ==========================================
     // 共用：路線詳情與實時 ETA
     // ==========================================
+    function renderRouteDetailStopsView({
+        container, stops, etaMap, etaLoading, route, bound, dest, isCitybus, isGmb,
+        gmbRegion, gmbRouteId, gmbRouteSeq, badgeColor, isTab3
+    }) {
+        const processedStops = (stops || []).map(s => {
+            const stopEtas = (etaMap && etaMap[String(s.seq)]) || [];
+            const sortedEtas = [...stopEtas].sort((a, b) => new Date(a) - new Date(b)).slice(0, 3);
+            return { ...s, sortedEtas };
+        });
+
+        if (processedStops.length === 0) {
+            container.innerHTML = '<div class="status-msg error" style="padding:30px;">未能取得車站資料。</div>';
+            return { activeCount: 0 };
+        }
+
+        const renderFavoriteButton = (s, stopName) => {
+            if (isTab3) return '';
+            return renderStopFavoriteButton(makeFavoriteStopPayload({
+                route,
+                routeDisplay: route,
+                bound,
+                dest,
+                isCitybus,
+                isGmb,
+                gmbRegion,
+                gmbRouteId,
+                gmbRouteSeq,
+                seq: s.seq,
+                stopId: s.stop,
+                stopName,
+                badgeColor
+            }));
+        };
+
+        let html = '<div style="background:var(--bg-color);min-height:100%;padding-bottom:20px;">';
+
+        if (etaLoading) {
+            html += '<div class="detail-eta-loading">車站已載入 · ETA 更新中…</div>';
+            html += '<div style="background:var(--card-bg);border-top:1px solid var(--separator);">';
+            processedStops.forEach(s => {
+                const stopName = s.name_tc || window.globalStopsMap[s.stop] || s.stop;
+                const isTargetStation = isTab3 && targetKeywords.some(kw => String(stopName).includes(kw));
+                const badge = isTargetStation ? '<span style="font-size:0.75rem;background:#34C759;color:white;padding:2px 8px;border-radius:6px;margin-left:8px;vertical-align:middle;font-weight:600;">目標車站</span>' : '';
+                const bgStyle = isTargetStation ? 'background:rgba(52,199,89,0.05);border-left:4px solid #34C759;' : 'background:var(--card-bg);border-left:4px solid transparent;';
+                const favoriteBtn = renderFavoriteButton(s, stopName);
+                html += `
+                <div style="padding:14px 16px 14px 12px;border-bottom:1px solid var(--separator);${bgStyle}">
+                    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+                        <div style="flex:1;min-width:0;padding-right:8px;font-size:1rem;font-weight:700;color:var(--text-main);line-height:1.3;">
+                            <span style="display:inline-block;width:24px;font-size:0.85rem;font-weight:600;color:var(--text-sub);">${escapeHtml(s.seq)}.</span>
+                            ${escapeHtml(stopName)} ${badge}
+                        </div>
+                        <div style="display:flex;align-items:center;white-space:nowrap;margin-left:auto;">
+                            <span class="detail-eta-pending">更新中…</span>${favoriteBtn}
+                        </div>
+                    </div>
+                </div>`;
+            });
+            html += '</div></div>';
+            container.innerHTML = html;
+            refreshFavoriteButtonStates();
+            return { activeCount: 0 };
+        }
+
+        const activeStops = processedStops.filter(s => s.sortedEtas.length > 0);
+        const inactiveStops = processedStops.filter(s => s.sortedEtas.length === 0);
+
+        if (activeStops.length > 0) {
+            html += '<div style="background:var(--card-bg);border-top:1px solid var(--separator);box-shadow:0 4px 12px rgba(0,0,0,0.04);margin-bottom:24px;">';
+            activeStops.forEach(s => {
+                const stopName = s.name_tc || window.globalStopsMap[s.stop] || s.stop;
+                const isTargetStation = isTab3 && targetKeywords.some(kw => String(stopName).includes(kw));
+                const badge = isTargetStation ? '<span style="font-size:0.75rem;background:#34C759;color:white;padding:2px 8px;border-radius:6px;margin-left:8px;vertical-align:middle;font-weight:600;">目標車站</span>' : '';
+                const bgStyle = isTargetStation ? 'background:rgba(52,199,89,0.05);border-left:4px solid #34C759;' : 'background:var(--card-bg);border-left:4px solid transparent;';
+                const favoriteBtn = renderFavoriteButton(s, stopName);
+                html += `
+                <div style="padding:16px 16px 16px 12px;border-bottom:1px solid var(--separator);${bgStyle}display:flex;flex-direction:column;justify-content:center;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <div style="flex:1;padding-right:12px;font-size:1.05rem;font-weight:700;color:var(--text-main);line-height:1.3;">
+                            <span style="display:inline-block;width:24px;font-size:0.85rem;font-weight:600;color:var(--text-sub);text-align:left;">${escapeHtml(s.seq)}.</span>
+                            ${escapeHtml(stopName)} ${badge}
+                        </div>
+                        <div style="display:flex;align-items:center;white-space:nowrap;margin-left:auto;">${generateEtaHtml(s.sortedEtas)}${favoriteBtn}</div>
+                    </div>
+                </div>`;
+            });
+            html += '</div>';
+        } else {
+            html += '<div class="status-msg" style="padding:20px;">目前沒有營運中的班次。</div>';
+        }
+
+        if (inactiveStops.length > 0) {
+            html += `
+            <div style="background:var(--bg-color);padding:12px 16px;font-size:0.85rem;font-weight:700;color:var(--text-sub);border-bottom:1px solid var(--separator);border-top:1px solid var(--separator);display:flex;align-items:center;">
+                <div style="flex:1;height:1px;background:var(--separator);margin-right:12px;"></div>
+                暫停服務 / 未有班次之車站
+                <div style="flex:1;height:1px;background:var(--separator);margin-left:12px;"></div>
+            </div>
+            <div style="background:var(--card-bg);opacity:0.55;">`;
+            inactiveStops.forEach(s => {
+                const stopName = s.name_tc || window.globalStopsMap[s.stop] || s.stop;
+                const favoriteBtn = renderFavoriteButton(s, stopName);
+                html += `
+                <div style="padding:12px 16px 12px 12px;border-bottom:1px solid var(--separator);">
+                    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+                        <div style="font-size:0.95rem;font-weight:600;color:var(--text-sub);line-height:1.4;flex:1;min-width:0;">
+                            <span style="display:inline-block;width:26px;font-size:0.85rem;font-weight:600;">${escapeHtml(s.seq)}.</span>
+                            <span>${escapeHtml(stopName)}</span>
+                        </div>${favoriteBtn}
+                    </div>
+                </div>`;
+            });
+            html += '</div>';
+        }
+
+        html += '</div>';
+        container.innerHTML = html;
+        refreshFavoriteButtonStates();
+        return { activeCount: activeStops.length };
+    }
+
     async function showRouteStops(route, bound, dest, isCitybus, badgeColor, isTab3, isGmb = false, gmbRegion = '', gmbRouteId = '', gmbRouteSeq = '', keepTab4ListScroll = false) {
         const prefix = isTab3 ? 'tab3-' : 'tab4-';
+        const requestSeq = (window.routeDetailRequestSeq = (window.routeDetailRequestSeq || 0) + 1);
+        const isCurrentRequest = () => window.routeDetailRequestSeq === requestSeq;
         let resolvedDestForFavorites = dest;
         let resolvedGmbRegionForFavorites = gmbRegion;
         let resolvedGmbRouteIdForFavorites = gmbRouteId;
@@ -2769,29 +2924,32 @@ function openSettings() {
         if (!isTab3) {
             updateTab4OppositeDirectionButton({ route, bound, dest, isCitybus: !!isCitybus, isGmb: !!isGmb, gmbRegion, gmbRouteId, gmbRouteSeq, badgeColor });
         }
-        
+
         document.getElementById(`${prefix}route-list-view`).style.display = 'none';
         document.getElementById(`${prefix}route-detail-view`).style.display = 'block';
         if (tab4ScrollEl) tab4ScrollEl.scrollTop = 0;
-        
+
         const numEl = document.getElementById(`${prefix}detail-route-num`);
         numEl.innerText = route;
         numEl.style.color = badgeColor || 'var(--text-main)';
         const initialDestLabel = isGmb && /^方向\s*\d+$/.test(String(dest || '')) ? `${dest}・載入中` : `往 ${dest}`;
         document.getElementById(`${prefix}detail-route-dest`).innerText = initialDestLabel;
-        
+
         const container = document.getElementById(`${prefix}detail-stops-container`);
         container.innerHTML = '';
         toggleSkeleton(`${prefix}detail-stops-skeleton`, true);
 
         try {
-            let stopsData = { data: [] };
-            let etaMap = {};
+            let stops = [];
+            const etaMap = {};
             let detailEtaStatusKey = '';
             const boundCode = bound === 'outbound' ? 'O' : 'I';
+            let gmbDetail = null;
 
+            // Phase 1: only load static stop data. Do not wait for live ETA before
+            // showing the route. This is the key fast-path for cached routes.
             if (isGmb) {
-                const gmbDetail = await resolveGmbDirectionForDetail(route, gmbRegion, gmbRouteId, gmbRouteSeq, bound);
+                gmbDetail = await resolveGmbDirectionForDetail(route, gmbRegion, gmbRouteId, gmbRouteSeq, bound);
                 resolvedGmbRegionForFavorites = gmbDetail.region || gmbRegion;
                 resolvedGmbRouteIdForFavorites = gmbDetail.routeId;
                 resolvedGmbRouteSeqForFavorites = gmbDetail.routeSeq;
@@ -2801,47 +2959,56 @@ function openSettings() {
                 }
                 detailEtaStatusKey = makeTab4DirStatusKey('', { route, bound: boundCode, isGmb: true, gmbRegion: resolvedGmbRegionForFavorites, routeId: gmbDetail.routeId, routeSeq: gmbDetail.routeSeq });
                 if (gmbDetail.dest_tc) document.getElementById(`${prefix}detail-route-dest`).innerText = `往 ${gmbDetail.dest_tc}`;
-                stopsData.data = await getGmbRouteStopsForDetail(gmbDetail.routeId, gmbDetail.routeSeq);
+                stops = await getGmbRouteStopsForDetail(gmbDetail.routeId, gmbDetail.routeSeq);
+            } else if (isCitybus) {
+                detailEtaStatusKey = makeTab4DirStatusKey('', { route, bound: boundCode, isCitybus: true });
+                stops = await getRouteStopsCached(route, bound === 'outbound' ? 'outbound' : 'inbound', true);
+            } else {
+                detailEtaStatusKey = makeTab4DirStatusKey('', { route, bound: boundCode });
+                stops = await getRouteStopsCached(route, bound, false);
+            }
 
-                const etaPromises = stopsData.data.map(async (s) => {
+            if (!isCurrentRequest()) return;
+            toggleSkeleton(`${prefix}detail-stops-skeleton`, false);
+            renderRouteDetailStopsView({
+                container, stops, etaMap, etaLoading: true, route, bound,
+                dest: resolvedDestForFavorites, isCitybus, isGmb,
+                gmbRegion: resolvedGmbRegionForFavorites,
+                gmbRouteId: resolvedGmbRouteIdForFavorites,
+                gmbRouteSeq: resolvedGmbRouteSeqForFavorites,
+                badgeColor, isTab3
+            });
+
+            // Phase 2: fetch live ETA in the background. GMB/Citybus are capped to
+            // six concurrent stop requests so opening a route does not flood the API.
+            if (isGmb && gmbDetail) {
+                await mapWithConcurrency(stops, 6, async s => {
                     try {
                         const etaList = await fetchGmbEtaForStop(gmbDetail.routeId, gmbDetail.routeSeq, s.seq);
                         if (etaList.length) etaMap[String(s.seq)] = etaList;
-                    } catch(err) {}
+                    } catch (err) {}
                 });
-                await Promise.all(etaPromises);
-
             } else if (isCitybus) {
-                detailEtaStatusKey = makeTab4DirStatusKey('', { route, bound: boundCode, isCitybus: true });
-                let ctbBound = bound === 'outbound' ? 'outbound' : 'inbound';
-                stopsData.data = await getRouteStopsCached(route, ctbBound, true);
-                
-                const etaPromises = stopsData.data.map(async (s) => {
+                await mapWithConcurrency(stops, 6, async s => {
                     try {
-                        let etaObj = await fetchJsonCached(`https://rt.data.gov.hk/v2/transport/citybus/eta/CTB/${s.stop}/${route}`, { ttl: 12000, timeout: 5000 });
+                        const etaObj = await fetchJsonCached(`https://rt.data.gov.hk/v2/transport/citybus/eta/CTB/${s.stop}/${route}`, { ttl: 12000, timeout: 5000 });
                         if (etaObj && etaObj.data) {
                             etaObj.data.forEach(e => {
                                 if (e.dir === boundCode && e.eta) {
-                                    let seqStr = String(s.seq);
+                                    const seqStr = String(s.seq);
                                     if (!etaMap[seqStr]) etaMap[seqStr] = [];
                                     etaMap[seqStr].push(e.eta);
                                 }
                             });
                         }
-                    } catch(err){}
+                    } catch (err) {}
                 });
-                await Promise.all(etaPromises);
-
             } else {
-                detailEtaStatusKey = makeTab4DirStatusKey('', { route, bound: boundCode });
-                stopsData.data = await getRouteStopsCached(route, bound, false);
-
                 const etaObj = await fetchJsonCached(`https://data.etabus.gov.hk/v1/transport/kmb/route-eta/${route}/1`, { ttl: 12000, timeout: 6000 });
-
                 if (etaObj && etaObj.data) {
                     etaObj.data.forEach(e => {
                         if (e.dir === boundCode && e.eta) {
-                            let seqStr = String(e.seq);
+                            const seqStr = String(e.seq);
                             if (!etaMap[seqStr]) etaMap[seqStr] = [];
                             etaMap[seqStr].push(e.eta);
                         }
@@ -2849,119 +3016,21 @@ function openSettings() {
                 }
             }
 
-            let processedStops = stopsData.data.map(s => {
-                let stopEtas = etaMap[String(s.seq)] || [];
-                let sortedEtas = stopEtas.sort((a, b) => new Date(a) - new Date(b)).slice(0, 3);
-                return { ...s, sortedEtas };
+            if (!isCurrentRequest()) return;
+            const result = renderRouteDetailStopsView({
+                container, stops, etaMap, etaLoading: false, route, bound,
+                dest: resolvedDestForFavorites, isCitybus, isGmb,
+                gmbRegion: resolvedGmbRegionForFavorites,
+                gmbRouteId: resolvedGmbRouteIdForFavorites,
+                gmbRouteSeq: resolvedGmbRouteSeqForFavorites,
+                badgeColor, isTab3
             });
-
-            let activeStops = processedStops.filter(s => s.sortedEtas.length > 0);
-            let inactiveStops = processedStops.filter(s => s.sortedEtas.length === 0);
-            if (!isTab3 && detailEtaStatusKey) setTab4DirEtaStatus(detailEtaStatusKey, activeStops.length > 0);
-            
-            let html = '<div style="background: var(--bg-color); min-height: 100%; padding-bottom: 20px;">';
-
-            if (activeStops.length > 0) {
-                html += '<div style="background: var(--card-bg); border-top: 1px solid var(--separator); box-shadow: 0 4px 12px rgba(0,0,0,0.04); margin-bottom: 24px;">';
-                
-                activeStops.forEach((s) => {
-                    let stopName = s.name_tc || window.globalStopsMap[s.stop] || s.stop;
-                    let isTargetStation = isTab3 && targetKeywords.some(kw => stopName.includes(kw));
-                    let badge = isTargetStation ? `<span style="font-size:0.75rem; background:#34C759; color:white; padding:2px 8px; border-radius:6px; margin-left:8px; vertical-align:middle; font-weight:600;">目標車站</span>` : '';
-                    let bgStyle = isTargetStation ? 'background: rgba(52,199,89,0.05); border-left: 4px solid #34C759;' : 'background: var(--card-bg); border-left: 4px solid transparent;';
-                    
-                    let etaHtml = generateEtaHtml(s.sortedEtas);
-                    let favoriteBtn = '';
-                    if (!isTab3) {
-                        favoriteBtn = renderStopFavoriteButton(makeFavoriteStopPayload({
-                            route,
-                            routeDisplay: route,
-                            bound,
-                            dest: resolvedDestForFavorites,
-                            isCitybus,
-                            isGmb,
-                            gmbRegion: resolvedGmbRegionForFavorites,
-                            gmbRouteId: resolvedGmbRouteIdForFavorites,
-                            gmbRouteSeq: resolvedGmbRouteSeqForFavorites,
-                            seq: s.seq,
-                            stopId: s.stop,
-                            stopName,
-                            badgeColor
-                        }));
-                    }
-
-                    html += `
-                    <div style="padding: 16px 16px 16px 12px; border-bottom: 1px solid var(--separator); ${bgStyle} display: flex; flex-direction: column; justify-content: center;">
-                        <div style="display: flex; justify-content: space-between; align-items: center;">
-                            <div style="flex: 1; padding-right: 12px; font-size: 1.05rem; font-weight: 700; color: var(--text-main); line-height: 1.3;">
-                                <span style="display:inline-block; width:24px; font-size:0.85rem; font-weight:600; color:var(--text-sub); text-align:left;">${s.seq}.</span>
-                                ${stopName} ${badge}
-                            </div>
-                            <div style="display: flex; align-items: center; white-space: nowrap; margin-left: auto;">
-                                ${etaHtml}
-                                ${favoriteBtn}
-                            </div>
-                        </div>
-                    </div>`;
-                });
-                html += '</div>';
-            } else {
-                html += '<div class="status-msg" style="padding: 20px;">目前沒有營運中的班次。</div>';
-            }
-
-            if (inactiveStops.length > 0) {
-                html += `
-                <div style="background: var(--bg-color); padding: 12px 16px; font-size: 0.85rem; font-weight: 700; color: var(--text-sub); border-bottom: 1px solid var(--separator); border-top: 1px solid var(--separator); display:flex; align-items:center;">
-                    <div style="flex:1; height:1px; background:var(--separator); margin-right:12px;"></div>
-                    暫停服務 / 未有班次之車站
-                    <div style="flex:1; height:1px; background:var(--separator); margin-left:12px;"></div>
-                </div>
-                <div style="background: var(--card-bg); opacity: 0.55;">
-                `;
-
-                inactiveStops.forEach((s) => {
-                    let stopName = s.name_tc || window.globalStopsMap[s.stop] || s.stop;
-                    let favoriteBtn = '';
-                    if (!isTab3) {
-                        favoriteBtn = renderStopFavoriteButton(makeFavoriteStopPayload({
-                            route,
-                            routeDisplay: route,
-                            bound,
-                            dest: resolvedDestForFavorites,
-                            isCitybus,
-                            isGmb,
-                            gmbRegion: resolvedGmbRegionForFavorites,
-                            gmbRouteId: resolvedGmbRouteIdForFavorites,
-                            gmbRouteSeq: resolvedGmbRouteSeqForFavorites,
-                            seq: s.seq,
-                            stopId: s.stop,
-                            stopName,
-                            badgeColor
-                        }));
-                    }
-                    html += `
-                    <div style="padding: 12px 16px 12px 12px; border-bottom: 1px solid var(--separator);">
-                        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
-                            <div style="font-size: 0.95rem; font-weight: 600; color: var(--text-sub); line-height: 1.4; flex:1; min-width:0;">
-                                <span style="display:inline-block; width:26px; font-size:0.85rem; font-weight:600;">${s.seq}.</span>
-                                <span>${stopName}</span>
-                            </div>
-                            ${favoriteBtn}
-                        </div>
-                    </div>`;
-                });
-                html += '</div>';
-            }
-            
-            html += '</div>';
-
-            toggleSkeleton(`${prefix}detail-stops-skeleton`, false);
-            container.innerHTML = html;
-
-        } catch(e) {
+            if (!isTab3 && detailEtaStatusKey) setTab4DirEtaStatus(detailEtaStatusKey, result.activeCount > 0);
+        } catch (e) {
+            if (!isCurrentRequest()) return;
             console.error(e);
             toggleSkeleton(`${prefix}detail-stops-skeleton`, false);
-            container.innerHTML = '<div class="status-msg error" style="padding: 30px;">無法載入車站或預報時間，請重試。</div>';
+            container.innerHTML = '<div class="status-msg error" style="padding:30px;">無法載入車站或預報時間，請重試。</div>';
         }
     }
 
@@ -3018,7 +3087,7 @@ function openSettings() {
 
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
         window.addEventListener('load', () => {
-            navigator.serviceWorker.register('./sw.js?v=6.2.0', { updateViaCache: 'none' }).catch(err => {
+            navigator.serviceWorker.register('./sw.js?v=6.3.0', { updateViaCache: 'none' }).catch(err => {
                 console.warn('Service worker registration failed:', err);
             });
         });

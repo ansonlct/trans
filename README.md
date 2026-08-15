@@ -1,4 +1,4 @@
-# Transport App v6.2.0
+# Transport App v6.3.0
 
 # 白石角出行 v6.0.0 — GitHub Pages + 九巴 / 城巴 / 專線小巴每日靜態快取
 
@@ -92,7 +92,7 @@ transport-app/
 
 ## 設定中的快取狀態燈
 
-設定頁會讀取 `data/transport-meta.json`，顯示 KMB / Citybus / GMB 每日快取健康狀態：
+設定頁的「快取狀態」按鈕按入後，才會讀取 `data/transport-meta.json`，顯示 KMB / Citybus / GMB 快取健康狀態：
 
 - 綠色 `Success`：該營辦商所有預定每日資料已於今次更新成功。
 - 黃色 `Partially success`：只有部分資料更新成功，或今日更新失敗但仍有上一日舊快取可用。
@@ -124,3 +124,12 @@ transport-app/
 - Route-search redraw no longer flashes the global loading bar on every keystroke.
 - Service Worker separates app/data caches and automatically removes old daily dataset entries.
 - Settings dialog supports Escape, focus return, small-screen scrolling and v6.2.0 version display.
+
+
+## v6.3.0 cache status / route detail performance
+- 「每日快取狀態」改為設定頁內的「快取狀態」按鈕；只有按入去先讀取狀態，並移除「重新檢查」。
+- 九巴 / 小巴詳情改為先顯示已快取的靜態車站名單，再於背景補上即時 ETA，不再等 ETA 全部完成才顯示頁面。
+- 九巴首次打開路線時，站名索引與該路線 route-stop 改為並行載入，減少串行等待。
+- 小巴 ETA 改為最多 6 個車站並行，避免一次開數十個請求。
+- 小巴路線詳情 / route-stop 本機持久快取由 1 小時延長至 24 小時。
+- 路線目錄停止為小巴逐站預查 ETA，避免背景請求與使用者打開詳情互相爭網絡。
