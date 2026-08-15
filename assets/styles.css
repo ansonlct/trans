@@ -236,3 +236,56 @@ body.route-keyboard-open #tab-4{padding-bottom:calc(var(--route-keyboard-reserve
 .timetable-day-card .timetable-section+.timetable-section{padding-top:0;}
 .timetable-day-empty{padding:18px 12px;color:var(--text-sub);font-size:.82rem;font-weight:700;text-align:center;}
 @media(max-width:380px){.op-btn{padding:6px 7px;font-size:.75rem;}.operator-selector{max-width:100%;}}
+
+
+/* v6.7.8: movable floating search bubble + keyboard-safe search sheet */
+.search-bar-container{padding:8px 12px;background:var(--bg-color);position:sticky;top:0;z-index:20;border-bottom:1px solid var(--separator);}
+.search-bar-container .operator-filter-row{margin-top:0;}
+.route-search-fab{
+    position:fixed;right:18px;bottom:calc(var(--tab-bar-height) + 18px + env(safe-area-inset-bottom));
+    width:58px;height:58px;border:1px solid color-mix(in srgb,var(--accent) 28%,var(--separator));border-radius:50%;
+    display:flex;align-items:center;justify-content:center;z-index:1550;background:color-mix(in srgb,var(--modal-bg) 88%,var(--accent) 12%);
+    color:var(--text-main);font-size:1.5rem;line-height:1;box-shadow:0 10px 26px rgba(0,0,0,.24);cursor:grab;
+    backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);touch-action:none;user-select:none;-webkit-user-select:none;
+    transition:opacity .16s ease,transform .16s ease,box-shadow .16s ease;
+}
+.route-search-fab:active{cursor:grabbing;transform:scale(.96);box-shadow:0 6px 18px rgba(0,0,0,.22);}
+.route-search-fab.hidden{opacity:0;visibility:hidden;pointer-events:none;transform:scale(.84);}
+@supports not (background:color-mix(in srgb,#000 10%,transparent)){.route-search-fab{background:var(--modal-bg);border-color:var(--separator);}}
+.route-search-floating-panel{
+    position:fixed;left:50%;bottom:calc(var(--tab-bar-height) + var(--route-keyboard-reserve) + 10px + env(safe-area-inset-bottom));
+    width:min(520px,calc(100vw - 24px));transform:translateX(-50%) translateY(12px);opacity:0;visibility:hidden;pointer-events:none;
+    z-index:1700;box-sizing:border-box;padding:8px;background:var(--modal-bg);border:1px solid var(--separator);border-radius:16px;
+    box-shadow:0 12px 34px rgba(0,0,0,.26);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+    transition:opacity .16s ease,transform .18s ease,bottom .12s linear;
+}
+.route-search-floating-panel.open{opacity:1;visibility:visible;pointer-events:auto;transform:translateX(-50%) translateY(0);}
+.route-search-floating-panel .route-search-field-wrap{position:relative;}
+.route-search-floating-panel .search-input-field{height:46px;padding:9px 42px 9px 38px;border-radius:12px;font-size:1rem;background:var(--card-bg);}
+.route-search-floating-panel .route-search-icon{left:12px;}
+.route-search-floating-panel .route-search-clear{right:8px;}
+body.route-search-native .route-search-floating-panel{
+    bottom:calc(var(--native-keyboard-offset,0px) + 10px + env(safe-area-inset-bottom));
+    z-index:2400;
+}
+body.route-search-native #tab-4{scroll-padding-bottom:80px;}
+.route-search-suggestions{
+    position:absolute;left:0;right:0;bottom:calc(100% + 8px);display:none;max-height:min(42dvh,330px);overflow:auto;
+    background:var(--modal-bg);border:1px solid var(--separator);border-radius:14px;box-shadow:0 12px 30px rgba(0,0,0,.24);z-index:1;
+    -webkit-overflow-scrolling:touch;
+}
+.route-search-suggestions.visible{display:block;}
+.route-search-suggestion{
+    appearance:none;-webkit-appearance:none;width:100%;border:0;border-bottom:1px solid var(--separator);background:transparent;color:var(--text-main);
+    display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 12px;text-align:left;font-family:inherit;cursor:pointer;
+}
+.route-search-suggestion:last-child{border-bottom:0;}
+.route-search-suggestion:active{background:rgba(128,128,128,.14);}
+.route-search-suggestion span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.9rem;font-weight:760;}
+.route-search-suggestion small{flex:0 0 auto;color:var(--text-sub);font-size:.7rem;font-weight:700;white-space:nowrap;}
+@media(max-width:380px){.route-search-fab{width:54px;height:54px;font-size:1.35rem}.route-search-floating-panel{width:calc(100vw - 18px)}}
+@media(prefers-reduced-motion:reduce){.route-search-fab,.route-search-floating-panel{transition:none!important}}
+
+/* v6.7.8: timetable is grouped by recurring service-day pattern. */
+.timetable-day-card-today{box-shadow:none;}
+.timetable-week-intro{font-weight:850;}

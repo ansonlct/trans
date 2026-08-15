@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '6.7.7';
+const APP_VERSION = '6.7.8';
 
 function renderAppVersion() {
     const el = document.getElementById('app-version-value');
@@ -605,7 +605,7 @@ function setSettingsCacheView(showCache) {
         const titles = {1: '白石角出發', 2: '我要回家', 3: '收藏', 4: '全港巴士/小巴查詢'};
         document.getElementById('page-title').innerText = titles[tabId];
 
-        if (tabId !== 4) hideRouteKeyboard();
+        if (tabId !== 4) collapseFloatingRouteSearch();
         if (tabId === 1 || tabId === 2) refreshAll(false);
         if (tabId === 3) renderFavorites();
         if (tabId === 4) initTab4();
@@ -1332,6 +1332,10 @@ function setSettingsCacheView(showCache) {
     window.tab4StopSearchIndexLoading = null;
     window.tab4StopSearchQueryCache = new Map();
     window.routeKeyboardForceTextInput = false;
+    window.routeSearchFloatingOpen = false;
+    window.routeSearchNativeMode = false;
+    window.routeSearchSuggestionTimer = null;
+    window.routeSearchBubbleDragging = false;
     window.routeEtaStatusTab4 = {};
     window.gmbRouteDetailCache = {};
     window.gmbDirectionsLoadedKeys = {};
@@ -1658,6 +1662,167 @@ function setSettingsCacheView(showCache) {
         };
     }
 
+    function mergeTimetableSchedules(dir, serviceIds) {
+        const fixed = new Set();
+        const ranges = new Map();
+        (serviceIds || []).forEach(serviceId => {
+            const schedule = dir && dir.s && dir.s[serviceId];
+            if (!schedule) return;
+            (schedule.t || []).forEach(time => fixed.add(String(time)));
+            (schedule.f || []).forEach(range => {
+                if (!Array.isArray(range) || range.length < 3) return;
+                ranges.set(`${range[0]}|${range[1]}|${range[2]}`, [String(range[0]), String(range[1]), Number(range[2])]);
+            });
+        });
+        return {
+            times: [...fixed].sort((a, b) => timetableClockMinutes(a) - timetableClockMinutes(b)),
+            frequencyRanges: [...ranges.values()].sort((a, b) =>
+                timetableClockMinutes(a[0]) - timetableClockMinutes(b[0]) ||
+                timetableClockMinutes(a[1]) - timetableClockMinutes(b[1]) ||
+                Number(a[2]) - Number(b[2])
+            )
+        };
+    }
+
+    function timetableScheduleSignature(data) {
+        return JSON.stringify([
+            (data && data.times) || [],
+            (data && data.frequencyRanges) || []
+        ]);
+    }
+
+    function serviceIdsForRegularWeekday(index, chosen, weekdayIndex) {
+        const compactNow = getHongKongServiceDayKey(6).replace(/-/g, '');
+        return Object.keys((chosen && chosen.dir && chosen.dir.s) || {}).filter(serviceId => {
+            const calendar = index && index.c && index.c[serviceId];
+            if (!calendar) return false;
+            if (calendar.s && compactNow < String(calendar.s)) return false;
+            if (calendar.e && compactNow > String(calendar.e)) return false;
+            return String(calendar.m || '').charAt(weekdayIndex) === '1';
+        });
+    }
+
+    function formatTimetableWeekdayGroup(indices) {
+        const list = [...new Set(indices || [])].sort((a, b) => a - b);
+        if (list.length === 5 && list.every((v, i) => v === i)) return '星期一至五';
+        const names = ['星期一','星期二','星期三','星期四','星期五','星期六','星期日'];
+        if (list.length === 1) return names[list[0]] || '';
+        const groups = [];
+        let start = null;
+        let prev = null;
+        const flush = () => {
+            if (start === null) return;
+            if (start === prev) groups.push(names[start]);
+            else if (prev === start + 1) groups.push(`${names[start]}、${names[prev]}`);
+            else groups.push(`${names[start]}至${String(names[prev]).replace('星期','')}`);
+            start = prev = null;
+        };
+        list.forEach(idx => {
+            if (start === null) { start = prev = idx; return; }
+            if (idx === prev + 1) { prev = idx; return; }
+            flush();
+            start = prev = idx;
+        });
+        flush();
+        return groups.join('、');
+    }
+
+    function makeTimetableRegularPatterns(index, chosen) {
+        const patterns = [];
+        // Keep the familiar Hong Kong timetable categories: weekdays are grouped
+        // only when their published schedules are genuinely identical; Saturday
+        // and Sunday remain explicit categories even when the times happen to match.
+        const weekdayBuckets = new Map();
+        for (let weekdayIndex = 0; weekdayIndex <= 4; weekdayIndex++) {
+            const services = serviceIdsForRegularWeekday(index, chosen, weekdayIndex);
+            const schedule = mergeTimetableSchedules(chosen.dir, services);
+            const signature = timetableScheduleSignature(schedule);
+            if (!weekdayBuckets.has(signature)) weekdayBuckets.set(signature, { indices: [], ...schedule, activeServices: services });
+            weekdayBuckets.get(signature).indices.push(weekdayIndex);
+        }
+        weekdayBuckets.forEach(bucket => patterns.push({
+            label: formatTimetableWeekdayGroup(bucket.indices),
+            indices: bucket.indices,
+            times: bucket.times,
+            frequencyRanges: bucket.frequencyRanges,
+            activeServices: bucket.activeServices
+        }));
+        [5, 6].forEach(weekdayIndex => {
+            const services = serviceIdsForRegularWeekday(index, chosen, weekdayIndex);
+            const schedule = mergeTimetableSchedules(chosen.dir, services);
+            patterns.push({
+                label: formatTimetableWeekdayGroup([weekdayIndex]),
+                indices: [weekdayIndex],
+                times: schedule.times,
+                frequencyRanges: schedule.frequencyRanges,
+                activeServices: services
+            });
+        });
+        return patterns;
+    }
+
+    function findTimetableHolidayPattern(index, chosen, regularPatterns) {
+        const relevantServices = new Set(Object.keys((chosen && chosen.dir && chosen.dir.s) || {}));
+        if (!relevantServices.size) return null;
+        const regularByWeekday = new Map();
+        (regularPatterns || []).forEach(pattern => (pattern.indices || []).forEach(idx => regularByWeekday.set(idx, pattern)));
+        const counts = new Map();
+        const samples = new Map();
+        for (const [compactDate, changes] of Object.entries((index && index.x) || {})) {
+            if (!/^\d{8}$/.test(compactDate) || !changes || typeof changes !== 'object') continue;
+            const dayKey = `${compactDate.slice(0,4)}-${compactDate.slice(4,6)}-${compactDate.slice(6,8)}`;
+            const weekdayIndex = getTimetableWeekdayIndex(dayKey);
+            if (weekdayIndex === 6) continue;
+            const affected = Object.keys(changes).some(serviceId => relevantServices.has(serviceId));
+            if (!affected) continue;
+            // Public-holiday / territory-wide substitutions affect a shared set of
+            // calendar services. Ignore tiny one-off edits when deriving a generic label.
+            if (Object.keys(changes).length < 3) continue;
+            const services = [...relevantServices].filter(serviceId => isTimetableServiceActive(index, serviceId, dayKey));
+            const schedule = mergeTimetableSchedules(chosen.dir, services);
+            const signature = timetableScheduleSignature(schedule);
+            const regular = regularByWeekday.get(weekdayIndex);
+            if (regular && signature === timetableScheduleSignature(regular)) continue;
+            counts.set(signature, (counts.get(signature) || 0) + 1);
+            if (!samples.has(signature)) samples.set(signature, { ...schedule, activeServices: services, dayKey });
+        }
+        if (!counts.size) return null;
+        const [bestSignature, bestCount] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+        const sample = samples.get(bestSignature);
+        return sample ? { ...sample, signature: bestSignature, occurrences: bestCount } : null;
+    }
+
+    async function getRouteTimetablePatterns(params) {
+        const index = await loadRouteTimetableIndex();
+        if (!index) return { unavailable: true };
+        const chosen = chooseTimetableRoute(index, params || {});
+        if (!chosen || !chosen.dir || !chosen.dir.s) return { notFound: true, index };
+        const patterns = makeTimetableRegularPatterns(index, chosen);
+        const holiday = findTimetableHolidayPattern(index, chosen, patterns);
+        if (holiday) {
+            const sunday = patterns.find(pattern => (pattern.indices || []).includes(6));
+            if (sunday && timetableScheduleSignature(sunday) === holiday.signature) {
+                sunday.label = `${sunday.label}及公眾假期`;
+                sunday.holidayDerived = true;
+            } else {
+                patterns.push({
+                    label: '公眾假期／特別服務日',
+                    indices: [],
+                    times: holiday.times,
+                    frequencyRanges: holiday.frequencyRanges,
+                    activeServices: holiday.activeServices,
+                    holidayDerived: true
+                });
+            }
+        }
+        return {
+            patterns,
+            routeId: chosen.routeId,
+            boundNo: chosen.boundNo,
+            sourceUpdatedAt: index.updatedAt || ''
+        };
+    }
+
     function addTimetableServiceDays(dayKey, offset) {
         const date = new Date(`${dayKey}T12:00:00+08:00`);
         date.setUTCDate(date.getUTCDate() + Number(offset || 0));
@@ -1708,11 +1873,11 @@ function setSettingsCacheView(showCache) {
         timetableReturnFocus = null;
     }
 
-    function renderTimetableDayBlock(data, dayIndex) {
-        const todayClass = dayIndex === 0 ? ' timetable-day-card-today' : '';
-        let html = `<section class="timetable-day-card${todayClass}"><div class="timetable-date"><strong>${escapeHtml(formatTimetableServiceDate(data.dayKey))}</strong><span>${dayIndex === 0 ? '今日 · ' : ''}總站開出</span></div>`;
+    function renderTimetablePatternBlock(data, patternIndex) {
+        const label = data && data.label ? data.label : '服務日';
+        let html = `<section class="timetable-day-card${patternIndex === 0 ? ' timetable-day-card-today' : ''}"><div class="timetable-date"><strong>${escapeHtml(label)}</strong><span>總站開出</span></div>`;
         if (!data.times.length && !data.frequencyRanges.length) {
-            html += '<div class="timetable-day-empty">當日沒有公布班次。</div>';
+            html += '<div class="timetable-day-empty">沒有公布班次。</div>';
         } else {
             if (data.times.length) {
                 html += '<div class="timetable-section"><h3>固定開出時間</h3><div class="timetable-time-grid">';
@@ -1735,27 +1900,24 @@ function setSettingsCacheView(showCache) {
         if (!ctx || !ctx.route || !openTimetableModalShell(ctx)) return;
         const content = document.getElementById('timetable-content');
         try {
-            const dayKeys = getTimetableSevenDayKeys();
-            const results = await Promise.all(dayKeys.map(dayKey => getRouteTimetable(ctx, dayKey)));
+            const result = await getRouteTimetablePatterns(ctx);
             if (!content || !document.getElementById('timetable-modal')?.classList.contains('open')) return;
-            if (results.every(data => data.unavailable)) {
+            if (result.unavailable) {
                 content.innerHTML = '<div class="timetable-empty">時間表資料尚未建立。<br><span>部署後請執行一次每日交通資料更新。</span></div>';
                 return;
             }
-            if (results.every(data => data.notFound)) {
+            if (result.notFound || !Array.isArray(result.patterns)) {
                 content.innerHTML = '<div class="timetable-empty">未能配對此方向的官方時間表。</div>';
                 return;
             }
-
-            let html = '<div class="timetable-week-intro">未來 7 個服務日 · 總站公布開出時間</div>';
-            results.forEach((data, idx) => {
-                if (data.unavailable || data.notFound) {
-                    html += `<section class="timetable-day-card"><div class="timetable-date"><strong>${escapeHtml(formatTimetableServiceDate(dayKeys[idx]))}</strong><span>總站開出</span></div><div class="timetable-day-empty">未能取得此日時間表。</div></section>`;
-                } else {
-                    html += renderTimetableDayBlock(data, idx);
-                }
-            });
-            html += '<div class="timetable-note">資料為運輸署公布時間表；實際開車時間可能因交通或營運調動而有差異。凌晨 06:00 前以前一服務日為第一日，以配合跨午夜 24:xx／25:xx 班次。</div>';
+            const visiblePatterns = result.patterns.filter(pattern => pattern.times.length || pattern.frequencyRanges.length);
+            if (!visiblePatterns.length) {
+                content.innerHTML = '<div class="timetable-empty">未有公布可顯示的總站開出時間。</div>';
+                return;
+            }
+            let html = '<div class="timetable-week-intro">按服務日類別 · 總站公布開出時間</div>';
+            visiblePatterns.forEach((pattern, idx) => { html += renderTimetablePatternBlock(pattern, idx); });
+            html += '<div class="timetable-note">資料按運輸署 GTFS 的星期服務規則及例外服務日整理；只有實際時間完全相同的平日才會合併為「星期一至五」。如公眾假期採用星期日服務，會合併顯示為「星期日及公眾假期」。實際開車時間仍可能因交通或營運調動而有差異。</div>';
             content.innerHTML = html;
         } catch (err) {
             console.warn('Show route timetable failed', err);
@@ -2126,7 +2288,7 @@ function setSettingsCacheView(showCache) {
             <div class="card favorite-card" data-favorite-key="${escapeHtml(fav.key)}">
                 <div class="card-header ${getFavoriteHeaderClass(fav)}">
                     <span class="icon">${getFavoriteIcon(fav)}</span>
-                    <span class="card-title timetable-link" onclick="showFavoriteTimetableFromEncoded('${encodeFavoriteStopPayload(fav)}')" title="查看一星期時間表">${escapeHtml(fav.routeDisplay || fav.route)}</span>
+                    <span class="card-title timetable-link" onclick="showFavoriteTimetableFromEncoded('${encodeFavoriteStopPayload(fav)}')" title="查看服務日時間表">${escapeHtml(fav.routeDisplay || fav.route)}</span>
                     <span class="favorite-route-meta">${escapeHtml(fav.operatorLabel || '')}</span>
                     ${renderFavoriteStarButton(fav)}
                 </div>
@@ -2786,18 +2948,57 @@ function setSettingsCacheView(showCache) {
         if (extra) extra.setAttribute('aria-label', visibleLetterCount ? '可接續英文字母' : '沒有可接續英文字母');
     }
 
+    function setRouteSearchFloatingOpen(open) {
+        const panel = document.getElementById('route-search-panel');
+        const fab = document.getElementById('route-search-fab');
+        window.routeSearchFloatingOpen = !!open;
+        if (panel) {
+            panel.classList.toggle('open', !!open);
+            panel.setAttribute('aria-hidden', open ? 'false' : 'true');
+        }
+        if (fab) {
+            fab.classList.toggle('hidden', !!open);
+            fab.setAttribute('aria-expanded', open ? 'true' : 'false');
+        }
+        document.body.classList.toggle('route-search-open', !!open);
+        if (!open) {
+            hideRouteKeyboard();
+            hideRouteSearchSuggestions();
+            const input = document.getElementById('route-search-input');
+            if (input && document.activeElement === input) input.blur();
+            window.routeSearchNativeMode = false;
+            document.body.classList.remove('route-search-native');
+            document.documentElement.style.setProperty('--native-keyboard-offset', '0px');
+            const panel = document.getElementById('route-search-panel');
+            if (panel) { panel.style.top = ''; panel.style.bottom = ''; }
+        }
+    }
+
+    function openFloatingRouteSearch() {
+        if (currentTab !== 4) return;
+        setRouteSearchFloatingOpen(true);
+        window.routeKeyboardForceTextInput = false;
+        window.routeSearchNativeMode = false;
+        document.body.classList.remove('route-search-native');
+        const input = document.getElementById('route-search-input');
+        if (input) input.setAttribute('inputmode', 'none');
+        showRouteKeyboard();
+    }
+
+    function collapseFloatingRouteSearch() {
+        setRouteSearchFloatingOpen(false);
+    }
+
     function showRouteKeyboard() {
         if (currentTab !== 4) return;
+        setRouteSearchFloatingOpen(true);
         const input = document.getElementById('route-search-input');
-        // 站名模式交由手機原生中文鍵盤處理；只要欄內仍是文字查詢，
-        // 再次點擊亦保持文字鍵盤。清空後會自動回到車號鍵盤。
-        const hasTextQuery = Boolean(input && input.value.trim() && !/^[A-Z0-9]+$/i.test(input.value.trim()));
-        if (window.routeKeyboardForceTextInput || hasTextQuery) {
-            if (input) input.setAttribute('inputmode', 'text');
-            hideRouteKeyboard();
-            return;
-        }
         if (input) input.setAttribute('inputmode', 'none');
+        window.routeSearchNativeMode = false;
+        window.routeKeyboardForceTextInput = false;
+        document.body.classList.remove('route-search-native');
+        const panel = document.getElementById('route-search-panel');
+        if (panel) { panel.style.top = ''; panel.style.bottom = ''; }
         buildRouteKeyboard();
         routeKeyboardSync();
         const keyboard = document.getElementById('route-keyboard');
@@ -2807,49 +3008,216 @@ function setSettingsCacheView(showCache) {
         document.body.classList.add('route-keyboard-open');
     }
 
-    function showStationTextKeyboard() {
+    function syncNativeKeyboardOffset() {
+        if (!window.routeSearchNativeMode) return;
+        const panel = document.getElementById('route-search-panel');
+        if (!panel) return;
+        const vv = window.visualViewport;
+        if (vv) {
+            const panelHeight = Math.max(54, panel.offsetHeight || 0);
+            const visibleBottom = Number(vv.offsetTop || 0) + Number(vv.height || 0);
+            const top = Math.max(8, visibleBottom - panelHeight - 10);
+            panel.style.top = `${Math.round(top)}px`;
+            panel.style.bottom = 'auto';
+        } else {
+            panel.style.top = 'auto';
+            panel.style.bottom = '10px';
+        }
+    }
+
+    function activateNativeRouteSearch(event) {
+        if (event) event.stopPropagation();
+        if (currentTab !== 4) return;
+        setRouteSearchFloatingOpen(true);
         const input = document.getElementById('route-search-input');
         if (!input) return;
+        window.routeSearchViewportBaseline = Math.max(Number(window.routeSearchViewportBaseline || 0), Number(window.innerHeight || 0), Number(document.documentElement.clientHeight || 0));
         window.routeKeyboardForceTextInput = true;
+        window.routeSearchNativeMode = true;
         hideRouteKeyboard();
+        document.body.classList.add('route-search-native');
         input.setAttribute('inputmode', 'text');
-        // 先 blur 再 focus，令 iOS / Android 真正重新判斷 inputmode。
-        input.blur();
-        setTimeout(() => {
-            try { input.focus({ preventScroll: true }); } catch (e) { input.focus(); }
-        }, 30);
+        // iOS/Android need a fresh focus after inputmode changes before showing the native IME.
+        if (document.activeElement !== input) {
+            setTimeout(() => {
+                try { input.focus({ preventScroll: true }); } catch (e) { input.focus(); }
+                setTimeout(syncNativeKeyboardOffset, 60);
+            }, 0);
+        } else {
+            setTimeout(syncNativeKeyboardOffset, 30);
+        }
+    }
+
+    function showStationTextKeyboard() {
+        activateNativeRouteSearch();
     }
 
     function onTab4SearchBlur() {
-        const input = document.getElementById('route-search-input');
-        if (!input) return;
         setTimeout(() => {
-            if (document.activeElement === input) return;
-            const value = input.value.trim();
-            // 空白／純車號離開欄位後，下次點擊恢復車號鍵盤；中文字查詢則保留原生文字模式。
-            if (!value || /^[A-Z0-9]+$/i.test(value)) {
-                window.routeKeyboardForceTextInput = false;
-                input.setAttribute('inputmode', 'none');
+            const input = document.getElementById('route-search-input');
+            if (!input || document.activeElement === input) return;
+            if (window.routeSearchNativeMode) {
+                window.routeSearchNativeMode = false;
+                document.body.classList.remove('route-search-native');
+                document.documentElement.style.setProperty('--native-keyboard-offset', '0px');
+                const panel = document.getElementById('route-search-panel');
+                if (panel) { panel.style.top = ''; panel.style.bottom = ''; }
             }
-        }, 80);
+        }, 100);
     }
 
     function hideRouteKeyboard() {
         const keyboard = document.getElementById('route-keyboard');
-        if (!keyboard) return;
-        keyboard.classList.remove('open');
-        keyboard.setAttribute('aria-hidden', 'true');
+        if (keyboard) {
+            keyboard.classList.remove('open');
+            keyboard.setAttribute('aria-hidden', 'true');
+        }
         document.body.classList.remove('route-keyboard-open');
     }
 
-    // 點擊車號輸入欄／自訂鍵盤以外任何位置即收起鍵盤，行為貼近原生手機鍵盤。
-    document.addEventListener('pointerdown', event => {
-        const keyboard = document.getElementById('route-keyboard');
-        if (!keyboard || !keyboard.classList.contains('open')) return;
+    function hideRouteSearchSuggestions() {
+        const box = document.getElementById('route-search-suggestions');
+        if (!box) return;
+        box.innerHTML = '';
+        box.classList.remove('visible');
+    }
+
+    function selectRouteSearchSuggestion(encodedValue) {
         const input = document.getElementById('route-search-input');
-        const searchWrap = document.querySelector('.route-search-field-wrap');
-        if (keyboard.contains(event.target) || (searchWrap && searchWrap.contains(event.target)) || (input && (event.target === input || input.contains?.(event.target)))) return;
-        hideRouteKeyboard();
+        if (!input) return;
+        let value = '';
+        try { value = decodeURIComponent(String(encodedValue || '')); } catch (e) { value = String(encodedValue || ''); }
+        input.value = value;
+        onTab4Search();
+        hideRouteSearchSuggestions();
+        if (window.routeSearchNativeMode) {
+            try { input.focus({ preventScroll: true }); } catch (e) { input.focus(); }
+        }
+    }
+
+    async function updateRouteSearchSuggestions() {
+        const input = document.getElementById('route-search-input');
+        const box = document.getElementById('route-search-suggestions');
+        if (!input || !box || !window.routeSearchFloatingOpen) return;
+        const raw = input.value.trim();
+        const isRouteCode = /^[A-Z0-9]+$/i.test(raw);
+        if (!raw || isRouteCode) {
+            hideRouteSearchSuggestions();
+            return;
+        }
+        const normalized = normalizeTab4StationSearchText(raw);
+        if (!normalized) {
+            hideRouteSearchSuggestions();
+            return;
+        }
+        const index = await ensureTab4StopSearchIndexLoaded();
+        if (raw !== input.value.trim() || !window.routeSearchFloatingOpen) return;
+        const candidates = (index || [])
+            .filter(item => item && String(item.n || '').includes(normalized))
+            .map(item => {
+                const name = String(item.d || item.n || '').trim();
+                const normalizedName = String(item.n || '');
+                const at = normalizedName.indexOf(normalized);
+                const routeCount = Array.isArray(item.r) ? item.r.length : 0;
+                return { name, routeCount, score: (at === 0 ? 0 : 100 + at) + Math.min(99, Math.max(0, name.length - raw.length)) };
+            })
+            .filter(item => item.name)
+            .sort((a, b) => a.score - b.score || b.routeCount - a.routeCount || a.name.localeCompare(b.name, 'zh-HK'))
+            .slice(0, 6);
+        if (!candidates.length) {
+            hideRouteSearchSuggestions();
+            return;
+        }
+        box.innerHTML = candidates.map(item => {
+            const encoded = encodeURIComponent(item.name).replace(/'/g, '%27');
+            return `<button type="button" class="route-search-suggestion" onpointerdown="event.preventDefault();event.stopPropagation()" onclick="selectRouteSearchSuggestion('${encoded}')"><span>📍 ${escapeHtml(item.name)}</span><small>${item.routeCount} 條路線</small></button>`;
+        }).join('');
+        box.classList.add('visible');
+    }
+
+    function scheduleRouteSearchSuggestions() {
+        clearTimeout(window.routeSearchSuggestionTimer);
+        window.routeSearchSuggestionTimer = setTimeout(() => updateRouteSearchSuggestions().catch(err => console.warn('Route search suggestions failed', err)), 120);
+    }
+
+    function initFloatingRouteSearch() {
+        const fab = document.getElementById('route-search-fab');
+        if (!fab || fab.dataset.ready === '1') return;
+        fab.dataset.ready = '1';
+        let drag = null;
+        const saveFabPosition = () => {
+            const rect = fab.getBoundingClientRect();
+            try { localStorage.setItem('psk_route_search_fab_v1', JSON.stringify({ x: rect.left, y: rect.top })); } catch (e) {}
+        };
+        const placeFab = (x, y) => {
+            const rect = fab.getBoundingClientRect();
+            const w = rect.width || 58;
+            const h = rect.height || 58;
+            const maxX = Math.max(8, window.innerWidth - w - 8);
+            const maxY = Math.max(8, window.innerHeight - h - 78);
+            fab.style.left = `${Math.max(8, Math.min(maxX, x))}px`;
+            fab.style.top = `${Math.max(8, Math.min(maxY, y))}px`;
+            fab.style.right = 'auto';
+            fab.style.bottom = 'auto';
+        };
+        try {
+            const saved = JSON.parse(localStorage.getItem('psk_route_search_fab_v1') || 'null');
+            if (saved && Number.isFinite(saved.x) && Number.isFinite(saved.y)) requestAnimationFrame(() => placeFab(saved.x, saved.y));
+        } catch (e) {}
+        fab.addEventListener('pointerdown', event => {
+            if (event.button !== undefined && event.button !== 0) return;
+            const rect = fab.getBoundingClientRect();
+            drag = { id: event.pointerId, startX: event.clientX, startY: event.clientY, x: rect.left, y: rect.top, moved: false };
+            window.routeSearchBubbleDragging = false;
+            try { fab.setPointerCapture(event.pointerId); } catch (e) {}
+        });
+        fab.addEventListener('pointermove', event => {
+            if (!drag || drag.id !== event.pointerId) return;
+            const dx = event.clientX - drag.startX;
+            const dy = event.clientY - drag.startY;
+            if (Math.hypot(dx, dy) > 6) drag.moved = true;
+            if (!drag.moved) return;
+            window.routeSearchBubbleDragging = true;
+            placeFab(drag.x + dx, drag.y + dy);
+        });
+        const finish = event => {
+            if (!drag || (event && drag.id !== event.pointerId)) return;
+            const moved = drag.moved;
+            try { fab.releasePointerCapture(drag.id); } catch (e) {}
+            drag = null;
+            if (moved) saveFabPosition();
+            else openFloatingRouteSearch();
+            setTimeout(() => { window.routeSearchBubbleDragging = false; }, 0);
+        };
+        fab.addEventListener('pointerup', finish);
+        fab.addEventListener('pointercancel', () => { drag = null; window.routeSearchBubbleDragging = false; });
+        fab.addEventListener('keydown', event => {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                openFloatingRouteSearch();
+            }
+        });
+        if (window.visualViewport) {
+            window.visualViewport.addEventListener('resize', syncNativeKeyboardOffset);
+            window.visualViewport.addEventListener('scroll', syncNativeKeyboardOffset);
+        }
+        window.addEventListener('resize', () => {
+            if (fab.style.left) {
+                const rect = fab.getBoundingClientRect();
+                placeFab(rect.left, rect.top);
+            }
+            syncNativeKeyboardOffset();
+        });
+    }
+
+    // Search closes when tapping elsewhere; tapping inside the panel, keypad or bubble keeps it open.
+    document.addEventListener('pointerdown', event => {
+        if (!window.routeSearchFloatingOpen) return;
+        const panel = document.getElementById('route-search-panel');
+        const keyboard = document.getElementById('route-keyboard');
+        const fab = document.getElementById('route-search-fab');
+        if ((panel && panel.contains(event.target)) || (keyboard && keyboard.contains(event.target)) || event.target === fab) return;
+        collapseFloatingRouteSearch();
     }, true);
 
     function setRouteKeyboardSearchValue(value) {
@@ -2858,7 +3226,6 @@ function setSettingsCacheView(showCache) {
         input.value = String(value || '').toUpperCase();
         onTab4Search();
         setTimeout(routeKeyboardSync, 0);
-        try { input.focus({ preventScroll: true }); } catch(e) { input.focus(); }
     }
 
     function routeKeyboardPress(key) {
@@ -3080,23 +3447,21 @@ function setSettingsCacheView(showCache) {
     function clearTab4Search() {
         const input = document.getElementById('route-search-input');
         if (!input) return;
-        const keyboard = document.getElementById('route-keyboard');
-        const keyboardWasOpen = Boolean(keyboard && keyboard.classList.contains('open'));
         window.routeKeyboardForceTextInput = false;
+        window.routeSearchNativeMode = false;
+        document.body.classList.remove('route-search-native');
         input.setAttribute('inputmode', 'none');
         input.value = '';
         onTab4Search();
-        if (keyboardWasOpen) {
-            try { input.focus({ preventScroll: true }); } catch (e) { input.focus(); }
-        } else {
-            input.blur();
-        }
+        hideRouteSearchSuggestions();
+        if (window.routeSearchFloatingOpen) showRouteKeyboard();
     }
 
     function onTab4Search() {
         window.tab4SearchText = document.getElementById('route-search-input').value.trim().toUpperCase();
         syncTab4SearchClearButton();
         routeKeyboardSync();
+        scheduleRouteSearchSuggestions();
         clearTimeout(window.tab4SearchTimeout);
         window.tab4SearchTimeout = setTimeout(() => updateTab4View(), 140);
     }
@@ -3945,8 +4310,8 @@ function setSettingsCacheView(showCache) {
             const isTargetStation = isTab3 && targetKeywords.some(kw => String(stopName).includes(kw));
             const badge = isTargetStation ? '<span style="font-size:0.75rem;background:#34C759;color:white;padding:2px 8px;border-radius:6px;margin-left:8px;vertical-align:middle;font-weight:600;">目標車站</span>' : '';
             const rowBg = isTargetStation ? 'background:rgba(52,199,89,0.05);border-left:4px solid #34C759;' : 'background:var(--card-bg);border-left:4px solid transparent;';
-            const inactiveStyle = hasEta ? '' : 'opacity:0.42;filter:grayscale(100%);';
-            const nameColor = hasEta ? 'var(--text-main)' : 'var(--text-sub)';
+            const inactiveStyle = '';
+            const nameColor = 'var(--text-main)';
             const etaHtml = hasEta
                 ? generateEtaHtml(s.sortedEtas)
                 : '<span style="font-size:0.82rem;color:var(--text-sub);font-weight:600;">暫無班次</span>';
@@ -3983,6 +4348,7 @@ function setSettingsCacheView(showCache) {
     }
 
     async function showRouteStops(route, bound, dest, isCitybus, badgeColor, isTab3, isGmb = false, gmbRegion = '', gmbRouteId = '', gmbRouteSeq = '', keepTab4ListScroll = false, isNlb = false, nlbRouteId = '', nlbPairKey = '') {
+        if (!isTab3) collapseFloatingRouteSearch();
         const prefix = isTab3 ? 'tab3-' : 'tab4-';
         const requestSeq = (window.routeDetailRequestSeq = (window.routeDetailRequestSeq || 0) + 1);
         const isCurrentRequest = () => window.routeDetailRequestSeq === requestSeq;
@@ -4213,6 +4579,7 @@ function setSettingsCacheView(showCache) {
     }
 
     preventAppZoomAndSelection();
+    initFloatingRouteSearch();
     initSettings();
     renderAppVersion();
 
@@ -4244,7 +4611,7 @@ function setSettingsCacheView(showCache) {
 
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
         window.addEventListener('load', () => {
-            navigator.serviceWorker.register('./sw.js?v=6.7.7', { updateViaCache: 'none' }).catch(err => {
+            navigator.serviceWorker.register('./sw.js?v=6.7.8', { updateViaCache: 'none' }).catch(err => {
                 console.warn('Service worker registration failed:', err);
             });
         });

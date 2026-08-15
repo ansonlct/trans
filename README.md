@@ -1,4 +1,13 @@
-# Transport App v6.7.7
+# Transport App v6.7.8
+
+## v6.7.8 Floating smart search / service-day timetable / normal-colour stops
+
+- 巴士/小巴搜尋改為右下角可拖動放大鏡波波。按下顯示搜尋格及智慧車號鍵盤；直接點搜尋格切換手機原生文字鍵盤。
+- 原生鍵盤模式會利用 Visual Viewport 將搜尋格保持在鍵盤上方。
+- 站名文字搜尋新增關聯車站建議；每日 GTFS 索引同時保存較易閱讀的原始站名。
+- 時間表由「未來 7 日」改為按服務日模式顯示；相同平日時段會合併成「星期一至五」，星期六、星期日獨立顯示，並從 calendar_dates 例外服務推斷公眾假期是否採用星期日服務。
+- 巴士/小巴路線詳情中，沒有 ETA 的車站不再變灰；「暫無班次」文字仍可保留。
+
 
 ## v6.7.7 Citybus fare / 7-day timetable / NLB
 

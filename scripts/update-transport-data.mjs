@@ -219,10 +219,15 @@ async function buildStopSearchIndex() {
     });
 
     const stopNames = new Map();
+    const stopDisplayNames = new Map();
     await readCsvRows(join(workDir, 'stops.txt'), row => {
       const stopId = String(row.stop_id || '').trim();
-      const normalizedName = normalizeStopSearchText(row.stop_name);
-      if (stopId && normalizedName) stopNames.set(stopId, normalizedName);
+      const rawName = String(row.stop_name || '').trim();
+      const normalizedName = normalizeStopSearchText(rawName);
+      if (stopId && normalizedName) {
+        stopNames.set(stopId, normalizedName);
+        stopDisplayNames.set(stopId, rawName.replace(/<BR\s*\/?\s*>/gi, ' · ').replace(/\s+/g, ' ').trim());
+      }
     });
 
     const stopRoutes = new Map();
@@ -262,6 +267,7 @@ async function buildStopSearchIndex() {
     // Merge physical stop IDs that normalize to the same station name.  The client
     // only needs a compact reverse index: station text -> operator/route numbers.
     const merged = new Map();
+    const mergedDisplayNames = new Map();
     const operatorStations = { KMB: new Set(), CTB: new Set(), NLB: new Set(), GMB: new Set() };
     for (const [stopId, routeTokens] of stopRoutes) {
       const name = stopNames.get(stopId);
@@ -271,6 +277,9 @@ async function buildStopSearchIndex() {
         set = new Set();
         merged.set(name, set);
       }
+      const displayName = stopDisplayNames.get(stopId) || name;
+      const existingDisplay = mergedDisplayNames.get(name) || '';
+      if (!existingDisplay || displayName.length < existingDisplay.length) mergedDisplayNames.set(name, displayName);
       for (const token of routeTokens) {
         set.add(token);
         const operator = token.split(':', 1)[0];
@@ -279,7 +288,7 @@ async function buildStopSearchIndex() {
     }
 
     const stations = [...merged.entries()]
-      .map(([name, tokens]) => ({ n: name, r: [...tokens].sort() }))
+      .map(([name, tokens]) => ({ n: name, d: mergedDisplayNames.get(name) || name, r: [...tokens].sort() }))
       .sort((a, b) => a.n.localeCompare(b.n, 'zh-HK'));
 
     const payload = {
