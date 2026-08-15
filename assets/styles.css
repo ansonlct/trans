@@ -315,3 +315,6 @@ body.route-search-open .route-search-backdrop{opacity:1;visibility:visible;point
 body.route-keyboard-open .route-search-floating-panel{border-bottom-left-radius:12px;border-bottom-right-radius:12px;}
 body.route-keyboard-open #tab-4{padding-bottom:calc(var(--tab-bar-height) + var(--route-keyboard-reserve) + 78px + env(safe-area-inset-bottom))!important;}
 @media(max-width:390px){.op-btn{font-size:.73rem;padding-left:5px;padding-right:5px}.tab4-gray-toggle{padding-right:4px}.tab4-gray-toggle-label{font-size:.64rem}}
+
+/* v6.8.0: keep an active search field visible after the keypad/IME is dismissed. */
+.route-search-floating-panel.pinned{pointer-events:auto;}

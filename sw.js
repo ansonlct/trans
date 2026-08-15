@@ -1,12 +1,12 @@
-const APP_CACHE = 'psk-transport-app-v6.7.9';
-const DATA_CACHE = 'psk-transport-data-v6.7.9';
+const APP_CACHE = 'psk-transport-app-v6.8.0';
+const DATA_CACHE = 'psk-transport-data-v6.8.0';
 
 const APP_SHELL = [
   './',
   './index.html',
-  './assets/styles.css?v=6.7.9',
-  './assets/app.js?v=6.7.9',
-  './manifest.webmanifest?v=6.7.9'
+  './assets/styles.css?v=6.8.0',
+  './assets/app.js?v=6.8.0',
+  './manifest.webmanifest?v=6.8.0'
 ];
 
 const LIVE_API_HOSTS = new Set([

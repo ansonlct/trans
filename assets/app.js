@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '6.7.9';
+const APP_VERSION = '6.8.0';
 
 function renderAppVersion() {
     const el = document.getElementById('app-version-value');
@@ -605,10 +605,13 @@ function setSettingsCacheView(showCache) {
         const titles = {1: '白石角出發', 2: '我要回家', 3: '收藏', 4: '全港巴士/小巴查詢'};
         document.getElementById('page-title').innerText = titles[tabId];
 
-        if (tabId !== 4) collapseFloatingRouteSearch();
+        if (tabId !== 4) collapseFloatingRouteSearch(true);
         if (tabId === 1 || tabId === 2) refreshAll(false);
         if (tabId === 3) renderFavorites();
-        if (tabId === 4) initTab4();
+        if (tabId === 4) {
+            initTab4();
+            if (routeSearchHasText()) setTimeout(() => pinFloatingRouteSearch(), 0);
+        }
     }
 
     function switchMtrDir(dir) {
@@ -2968,21 +2971,34 @@ function setSettingsCacheView(showCache) {
         if (extra) extra.setAttribute('aria-label', visibleLetterCount ? '可接續英文字母' : '沒有可接續英文字母');
     }
 
-    function setRouteSearchFloatingOpen(open) {
+    function routeSearchHasText() {
+        const input = document.getElementById('route-search-input');
+        return Boolean(input && input.value.trim());
+    }
+
+    function setRouteSearchShield(active) {
+        const backdrop = document.getElementById('route-search-backdrop');
+        if (backdrop) backdrop.setAttribute('aria-hidden', active ? 'false' : 'true');
+        document.body.classList.toggle('route-search-open', !!active);
+    }
+
+    function setRouteSearchFloatingOpen(open, options = {}) {
         const panel = document.getElementById('route-search-panel');
         const fab = document.getElementById('route-search-fab');
+        const pinned = Boolean(open && options.pinned);
+        const shield = Boolean(open && (options.shield !== undefined ? options.shield : !pinned));
         window.routeSearchFloatingOpen = !!open;
+        window.routeSearchPinned = pinned;
         if (panel) {
             panel.classList.toggle('open', !!open);
+            panel.classList.toggle('pinned', pinned);
             panel.setAttribute('aria-hidden', open ? 'false' : 'true');
         }
         if (fab) {
             fab.classList.toggle('hidden', !!open);
             fab.setAttribute('aria-expanded', open ? 'true' : 'false');
         }
-        const backdrop = document.getElementById('route-search-backdrop');
-        if (backdrop) backdrop.setAttribute('aria-hidden', open ? 'false' : 'true');
-        document.body.classList.toggle('route-search-open', !!open);
+        setRouteSearchShield(shield);
         if (!open) {
             hideRouteKeyboard();
             hideRouteSearchSuggestions();
@@ -2991,14 +3007,37 @@ function setSettingsCacheView(showCache) {
             window.routeSearchNativeMode = false;
             document.body.classList.remove('route-search-native');
             document.documentElement.style.setProperty('--native-keyboard-offset', '0px');
-            const panel = document.getElementById('route-search-panel');
             if (panel) { panel.style.top = ''; panel.style.bottom = ''; }
+        }
+    }
+
+    function pinFloatingRouteSearch() {
+        if (currentTab !== 4 || !routeSearchHasText()) {
+            setRouteSearchFloatingOpen(false, { shield: false });
+            return;
+        }
+        window.routeSearchNativeMode = false;
+        window.routeKeyboardForceTextInput = false;
+        document.body.classList.remove('route-search-native');
+        document.documentElement.style.setProperty('--native-keyboard-offset', '0px');
+        setRouteSearchFloatingOpen(true, { shield: false, pinned: true });
+        hideRouteKeyboard();
+        hideRouteSearchSuggestions();
+        const input = document.getElementById('route-search-input');
+        if (input) {
+            input.setAttribute('inputmode', 'none');
+            if (document.activeElement === input) input.blur();
+        }
+        const panel = document.getElementById('route-search-panel');
+        if (panel) {
+            panel.style.top = 'auto';
+            panel.style.bottom = 'calc(var(--tab-bar-height) + 18px + env(safe-area-inset-bottom))';
         }
     }
 
     function openFloatingRouteSearch() {
         if (currentTab !== 4) return;
-        setRouteSearchFloatingOpen(true);
+        setRouteSearchFloatingOpen(true, { shield: true, pinned: false });
         window.routeKeyboardForceTextInput = false;
         window.routeSearchNativeMode = false;
         document.body.classList.remove('route-search-native');
@@ -3007,8 +3046,12 @@ function setSettingsCacheView(showCache) {
         showRouteKeyboard();
     }
 
-    function collapseFloatingRouteSearch() {
-        setRouteSearchFloatingOpen(false);
+    function collapseFloatingRouteSearch(force = false) {
+        if (!force && routeSearchHasText()) {
+            pinFloatingRouteSearch();
+            return;
+        }
+        setRouteSearchFloatingOpen(false, { shield: false });
     }
 
     function syncCustomRouteSearchPosition() {
@@ -3025,7 +3068,7 @@ function setSettingsCacheView(showCache) {
 
     function showRouteKeyboard() {
         if (currentTab !== 4) return;
-        setRouteSearchFloatingOpen(true);
+        setRouteSearchFloatingOpen(true, { shield: true, pinned: false });
         const input = document.getElementById('route-search-input');
         if (input) input.setAttribute('inputmode', 'none');
         window.routeSearchNativeMode = false;
@@ -3072,7 +3115,7 @@ function setSettingsCacheView(showCache) {
     function activateNativeRouteSearch(event) {
         if (event) event.stopPropagation();
         if (currentTab !== 4) return;
-        setRouteSearchFloatingOpen(true);
+        setRouteSearchFloatingOpen(true, { shield: true, pinned: false });
         const input = document.getElementById('route-search-input');
         if (!input) return;
         window.routeSearchViewportBaseline = Math.max(Number(window.routeSearchViewportBaseline || 0), Number(window.innerHeight || 0), Number(document.documentElement.clientHeight || 0));
@@ -3106,6 +3149,7 @@ function setSettingsCacheView(showCache) {
                 document.documentElement.style.setProperty('--native-keyboard-offset', '0px');
                 const panel = document.getElementById('route-search-panel');
                 if (panel) { panel.style.top = ''; panel.style.bottom = ''; }
+                if (routeSearchHasText()) pinFloatingRouteSearch();
             }
         }, 100);
     }
@@ -3124,6 +3168,12 @@ function setSettingsCacheView(showCache) {
                 panel.style.bottom = 'calc(var(--tab-bar-height) + 18px + env(safe-area-inset-bottom))';
             }
         }
+    }
+
+    function closeRouteKeyboard() {
+        hideRouteKeyboard();
+        if (routeSearchHasText()) pinFloatingRouteSearch();
+        else collapseFloatingRouteSearch(true);
     }
 
     function hideRouteSearchSuggestions() {
@@ -3266,6 +3316,7 @@ function setSettingsCacheView(showCache) {
     // the touch/click can never fall through into a route row underneath.
     document.addEventListener('pointerdown', event => {
         if (!window.routeSearchFloatingOpen) return;
+        if (window.routeSearchPinned) return;
         const panel = document.getElementById('route-search-panel');
         const keyboard = document.getElementById('route-keyboard');
         const fab = document.getElementById('route-search-fab');
@@ -3503,6 +3554,7 @@ function setSettingsCacheView(showCache) {
     function clearTab4Search() {
         const input = document.getElementById('route-search-input');
         if (!input) return;
+        const wasPinned = Boolean(window.routeSearchPinned);
         window.routeKeyboardForceTextInput = false;
         window.routeSearchNativeMode = false;
         document.body.classList.remove('route-search-native');
@@ -3510,7 +3562,8 @@ function setSettingsCacheView(showCache) {
         input.value = '';
         onTab4Search();
         hideRouteSearchSuggestions();
-        if (window.routeSearchFloatingOpen) showRouteKeyboard();
+        if (wasPinned) collapseFloatingRouteSearch(true);
+        else if (window.routeSearchFloatingOpen) showRouteKeyboard();
     }
 
     function onTab4Search() {
@@ -4404,7 +4457,7 @@ function setSettingsCacheView(showCache) {
     }
 
     async function showRouteStops(route, bound, dest, isCitybus, badgeColor, isTab3, isGmb = false, gmbRegion = '', gmbRouteId = '', gmbRouteSeq = '', keepTab4ListScroll = false, isNlb = false, nlbRouteId = '', nlbPairKey = '') {
-        if (!isTab3) collapseFloatingRouteSearch();
+        if (!isTab3) collapseFloatingRouteSearch(true);
         const prefix = isTab3 ? 'tab3-' : 'tab4-';
         const requestSeq = (window.routeDetailRequestSeq = (window.routeDetailRequestSeq || 0) + 1);
         const isCurrentRequest = () => window.routeDetailRequestSeq === requestSeq;
@@ -4622,6 +4675,9 @@ function setSettingsCacheView(showCache) {
                 if (window.requestAnimationFrame) requestAnimationFrame(restoreScroll);
                 else setTimeout(restoreScroll, 0);
             }
+            if (routeSearchHasText()) {
+                setTimeout(() => pinFloatingRouteSearch(), 0);
+            }
         }
     }
 
@@ -4668,7 +4724,7 @@ function setSettingsCacheView(showCache) {
 
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
         window.addEventListener('load', () => {
-            navigator.serviceWorker.register('./sw.js?v=6.7.9', { updateViaCache: 'none' }).catch(err => {
+            navigator.serviceWorker.register('./sw.js?v=6.8.0', { updateViaCache: 'none' }).catch(err => {
                 console.warn('Service worker registration failed:', err);
             });
         });
