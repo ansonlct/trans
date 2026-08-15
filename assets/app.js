@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '6.3.0';
+const APP_VERSION = '6.4.0';
 
 function renderAppVersion() {
     const el = document.getElementById('app-version-value');
@@ -12,9 +12,11 @@ let settingsReturnFocus = null;
 function setSettingsCacheView(showCache) {
         const modal = document.getElementById('settings-modal');
         if (!modal) return;
-        modal.querySelectorAll('.settings-main-item').forEach(el => { el.hidden = !!showCache; });
-        const panel = document.getElementById('cache-status-panel');
-        if (panel) panel.hidden = !showCache;
+        modal.classList.toggle('cache-view', !!showCache);
+        const mainPage = document.getElementById('settings-main-page');
+        const cachePage = document.getElementById('cache-status-panel');
+        if (mainPage) mainPage.setAttribute('aria-hidden', showCache ? 'true' : 'false');
+        if (cachePage) cachePage.setAttribute('aria-hidden', showCache ? 'false' : 'true');
         const backBtn = document.getElementById('settings-back-btn');
         if (backBtn) backBtn.hidden = !showCache;
         const title = document.getElementById('settings-title');
@@ -1223,7 +1225,7 @@ function setSettingsCacheView(showCache) {
     // Tab 4 本機快取：先顯示舊資料，再背景更新。
     // 只快取靜態路線/方向資料；ETA 到站時間仍然即時讀取。
     // ==========================================
-    const TAB4_ROUTE_CACHE_KEY = 'psk_transport_tab4_route_groups_v2';
+    const TAB4_ROUTE_CACHE_KEY = 'psk_transport_tab4_route_groups_v3';
     const TAB4_ROUTE_CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
 
     function safeLocalStorageGet(key) {
@@ -1601,26 +1603,23 @@ function setSettingsCacheView(showCache) {
         const directions = (routeObj && typeof routeObj === 'object' && Array.isArray(routeObj.directions)) ? routeObj.directions : [];
 
         if (directions.length === 0) {
-            // 路線總表只得車號、未有方向資料時，先顯示兩個明確入口。
-            // 按「方向 1」會讀取第一個方向；按「方向 2」會讀取第二個方向。
-            // 背景補齊成功後，列表會自動改回真正的目的地名稱。
-            [
-                { bound: 'O', label: '方向 1' },
-                { bound: 'I', label: '方向 2' }
-            ].forEach(item => addGmbDirectionToTab4(groupKey, {
+            // 路線總表未有方向／站名時，只放一個非方向式載入項目。
+            // 可見列會隨即讀取路線詳情及 route-stop，完成後直接改成實際站名。
+            addGmbDirectionToTab4(groupKey, {
                 route: routeCode,
                 displayRoute: routeCode,
-                bound: item.bound,
+                bound: 'O',
                 orig_tc: regionLabel,
-                dest_tc: item.label,
+                dest_tc: '載入站名…',
                 isCitybus: false,
                 isGmb: true,
                 gmbRegion: region,
                 routeId,
                 routeSeq: '',
                 needsGmbDetail: true,
+                gmbPlaceholder: true,
                 operatorName: `${regionLabel}專線小巴`
-            }));
+            });
             return;
         }
 
@@ -1793,14 +1792,36 @@ function setSettingsCacheView(showCache) {
         return directionsOut;
     }
 
+    async function enrichGmbDirectionsWithTerminalStopNames(directions) {
+        const dirs = (directions || []).map(dir => ({ ...dir }));
+        await mapWithConcurrency(dirs, 4, async dir => {
+            if (!dir.isGmb || !dir.routeId || !dir.routeSeq) return;
+            try {
+                const stops = await getGmbRouteStopsForDetail(dir.routeId, dir.routeSeq);
+                if (!stops || stops.length === 0) return;
+                const first = stops[0];
+                const last = stops[stops.length - 1];
+                const firstName = getGmbText(first && first.name_tc, first && first.stop_name_tc, first && first.stop);
+                const lastName = getGmbText(last && last.name_tc, last && last.stop_name_tc, last && last.stop);
+                if (firstName) dir.orig_tc = firstName;
+                if (lastName) dir.dest_tc = lastName;
+                dir.gmbPlaceholder = false;
+            } catch (error) {
+                console.warn('GMB terminal stop name failed', dir.route, dir.routeSeq, error);
+            }
+        });
+        return dirs;
+    }
+
     async function ensureGmbDirectionsLoadedForKeys(groupKeys) {
         const updatedKeys = [];
         const keys = [...new Set((groupKeys || []).filter(key => {
             const dirs = window.allRoutesGroupsTab4[key] || [];
             if (!dirs.some(d => d.isGmb)) return false;
             if (window.gmbDirectionsLoadedKeys[key]) return false;
-            // 路線總表只得編號時，先用 placeholder 顯示；實際方向要進一步讀 /route/{region}/{route}。
-            return dirs.some(d => d.needsGmbDetail || !d.routeId || !d.routeSeq || /點擊載入方向資料|詳情|^方向\s*\d+$/.test(String(d.dest_tc || '')));
+            // 小巴清單直接用 route-stop 的首／尾站名，而不是「方向 1／2」或模糊方向文字。
+            // 因此每個首次出現在畫面的 GMB 路線都補一次詳情及終點站名，之後由本機快取重用。
+            return true;
         }))];
 
         if (keys.length === 0) return updatedKeys;
@@ -1819,8 +1840,9 @@ function setSettingsCacheView(showCache) {
                     if (!region || !routeCode) return;
 
                     const detailRoutes = await getGmbRouteDetailByCode(region, routeCode);
-                    const detailDirs = buildGmbDirectionsFromDetailRoutes(detailRoutes, region, routeCode)
+                    let detailDirs = buildGmbDirectionsFromDetailRoutes(detailRoutes, region, routeCode)
                         .filter(d => d.route && String(d.route).toUpperCase() === String(routeCode).toUpperCase());
+                    detailDirs = await enrichGmbDirectionsWithTerminalStopNames(detailDirs);
 
                     if (detailDirs.length > 0) {
                         window.allRoutesGroupsTab4[key] = detailDirs;
@@ -2327,7 +2349,7 @@ function setSettingsCacheView(showCache) {
         // 小巴方向資料改為背景補齊：先顯示路線號碼，方向載入後即時更新該列。
         const pendingGmbKeys = chunkNames.filter(key => {
             const dirs = window.allRoutesGroupsTab4[key] || [];
-            return dirs.some(d => d.isGmb && (d.needsGmbDetail || !d.routeId || !d.routeSeq || /點擊載入方向資料|詳情|^方向\s*\d+$/.test(String(d.dest_tc || ''))));
+            return !window.gmbDirectionsLoadedKeys[key] && dirs.some(d => d.isGmb);
         });
         if (pendingGmbKeys.length) {
             ensureGmbDirectionsLoadedForKeys(pendingGmbKeys).then(updatedKeys => {
@@ -2656,11 +2678,13 @@ function setSettingsCacheView(showCache) {
             const regionArg = escapeJsArg(dir.gmbRegion || '');
             const routeIdArg = escapeJsArg(dir.routeId || '');
             const routeSeqArg = escapeJsArg(dir.routeSeq || '');
-            const isGenericDirectionLabel = dir.isGmb && /^方向\s*\d+$/.test(String(dir.dest_tc || ''));
-            const directionPrefixHtml = isGenericDirectionLabel ? '' : '<span class="dir-prefix">往</span>';
+            const isGmbPlaceholder = !!(dir.isGmb && dir.gmbPlaceholder);
+            const directionPrefixHtml = isGmbPlaceholder ? '' : '<span class="dir-prefix">往</span>';
+            const clickAttr = isGmbPlaceholder ? '' : `onclick="showRouteStops('${routeArg}', '${boundStr}', '${destArg}', ${dir.isCitybus || false}, '${badgeArg}', ${isTab3}, ${dir.isGmb || false}, '${regionArg}', '${routeIdArg}', '${routeSeqArg}')"`;
+            const placeholderClass = isGmbPlaceholder ? ' route-dir-loading' : '';
 
             return `
-            <div ${blockId} class="route-dir-block" style="${dirOpacityStyle}" onclick="showRouteStops('${routeArg}', '${boundStr}', '${destArg}', ${dir.isCitybus || false}, '${badgeArg}', ${isTab3}, ${dir.isGmb || false}, '${regionArg}', '${routeIdArg}', '${routeSeqArg}')">
+            <div ${blockId} class="route-dir-block${placeholderClass}" style="${dirOpacityStyle}" ${clickAttr}>
                 <div class="dir-dest-container">
                     ${directionPrefixHtml}
                     <span class="dir-dest">${dir.dest_tc}</span>
@@ -2932,7 +2956,7 @@ function setSettingsCacheView(showCache) {
         const numEl = document.getElementById(`${prefix}detail-route-num`);
         numEl.innerText = route;
         numEl.style.color = badgeColor || 'var(--text-main)';
-        const initialDestLabel = isGmb && /^方向\s*\d+$/.test(String(dest || '')) ? `${dest}・載入中` : `往 ${dest}`;
+        const initialDestLabel = isGmb && /^(載入站名|方向\s*\d+)/.test(String(dest || '')) ? '載入站名…' : `往 ${dest}`;
         document.getElementById(`${prefix}detail-route-dest`).innerText = initialDestLabel;
 
         const container = document.getElementById(`${prefix}detail-stops-container`);
@@ -3056,6 +3080,16 @@ function setSettingsCacheView(showCache) {
         }
     }
 
+    function preventAppZoomAndSelection() {
+        document.addEventListener('dblclick', event => event.preventDefault(), { passive: false });
+        ['gesturestart', 'gesturechange', 'gestureend'].forEach(type => {
+            document.addEventListener(type, event => event.preventDefault(), { passive: false });
+        });
+        document.addEventListener('selectstart', event => event.preventDefault(), { passive: false });
+        document.addEventListener('dragstart', event => event.preventDefault(), { passive: false });
+    }
+
+    preventAppZoomAndSelection();
     initSettings();
     renderAppVersion();
 
@@ -3087,7 +3121,7 @@ function setSettingsCacheView(showCache) {
 
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
         window.addEventListener('load', () => {
-            navigator.serviceWorker.register('./sw.js?v=6.3.0', { updateViaCache: 'none' }).catch(err => {
+            navigator.serviceWorker.register('./sw.js?v=6.4.0', { updateViaCache: 'none' }).catch(err => {
                 console.warn('Service worker registration failed:', err);
             });
         });

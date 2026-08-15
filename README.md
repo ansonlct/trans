@@ -1,4 +1,11 @@
-# Transport App v6.3.0
+# Transport App v6.4.0
+
+
+## v6.4.0 GMB stop names / interaction lock / settings slide
+
+- GMB route directory no longer shows generic `方向 1` / `方向 2`; visible GMB routes resolve terminal stop names from route-stop data and cache them locally.
+- Disabled accidental double-click/double-tap zoom, pinch gesture zoom, text selection, drag selection and tap highlight.
+- Cache Status is now a two-page Settings slide: opening slides left; `上一頁` slides right back to Settings.
 
 # 白石角出行 v6.0.0 — GitHub Pages + 九巴 / 城巴 / 專線小巴每日靜態快取
 
