@@ -3291,10 +3291,26 @@ function setSettingsCacheView(showCache) {
             const rect = fab.getBoundingClientRect();
             const w = rect.width || 58;
             const h = rect.height || 58;
-            const maxX = Math.max(8, window.innerWidth - w - 8);
-            const maxY = Math.max(8, window.innerHeight - h - 78);
-            fab.style.left = `${Math.max(8, Math.min(maxX, x))}px`;
-            fab.style.top = `${Math.max(8, Math.min(maxY, y))}px`;
+            const vv = window.visualViewport;
+            const viewportLeft = vv ? Number(vv.offsetLeft || 0) : 0;
+            const viewportTop = vv ? Number(vv.offsetTop || 0) : 0;
+            const viewportWidth = vv ? Number(vv.width || window.innerWidth || 0) : Number(window.innerWidth || 0);
+            const viewportHeight = vv ? Number(vv.height || window.innerHeight || 0) : Number(window.innerHeight || 0);
+            const minX = viewportLeft + 8;
+            const minY = viewportTop + 8;
+            const maxX = Math.max(minX, viewportLeft + viewportWidth - w - 8);
+            let maxY = Math.max(minY, viewportTop + viewportHeight - h - 8);
+            const tabBar = document.querySelector('.tab-bar');
+            if (tabBar) {
+                const navRect = tabBar.getBoundingClientRect();
+                const navTop = Number(navRect.top || 0);
+                const visibleBottom = viewportTop + viewportHeight;
+                if (navRect.height > 0 && navTop > viewportTop && navTop < visibleBottom) {
+                    maxY = Math.min(maxY, Math.max(minY, navTop - h - 10));
+                }
+            }
+            fab.style.left = `${Math.max(minX, Math.min(maxX, x))}px`;
+            fab.style.top = `${Math.max(minY, Math.min(maxY, y))}px`;
             fab.style.right = 'auto';
             fab.style.bottom = 'auto';
         };
@@ -3336,8 +3352,15 @@ function setSettingsCacheView(showCache) {
             }
         });
         if (window.visualViewport) {
-            window.visualViewport.addEventListener('resize', syncNativeKeyboardOffset);
-            window.visualViewport.addEventListener('scroll', syncNativeKeyboardOffset);
+            const syncViewportLayout = () => {
+                syncNativeKeyboardOffset();
+                if (fab.style.left && !window.routeSearchFloatingOpen) {
+                    const rect = fab.getBoundingClientRect();
+                    placeFab(rect.left, rect.top);
+                }
+            };
+            window.visualViewport.addEventListener('resize', syncViewportLayout);
+            window.visualViewport.addEventListener('scroll', syncViewportLayout);
         }
         window.addEventListener('resize', () => {
             if (fab.style.left) {

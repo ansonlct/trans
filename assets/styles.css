@@ -369,3 +369,44 @@ body.dark-mode .tab-item.active{color:#0A84FF;background:rgba(10,132,255,.16);bo
     body.dark-mode .tab-item.active{background:rgba(10,132,255,.16);}
 }
 @media(prefers-reduced-motion:reduce){.tab-item{transition:none!important;}}
+
+
+/* v6.8.2: monochrome iOS-style tab symbols, native scroll-edge guard, keyboard-safe nav, FAB/nav collision guard. */
+header{
+    position:sticky;top:0;z-index:1200;background:var(--bg-color);isolation:isolate;
+    -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+}
+/* WebKit's iOS scroll-edge material can blur page chrome at the top edge. A 1px
+   viewport-constrained color edge keeps the app header out of that native blur pocket. */
+header::before{
+    content:"";position:fixed;left:0;right:0;top:0;height:1px;background:var(--bg-color);pointer-events:none;
+}
+#page-title,.update-time,.settings-btn{position:relative;z-index:1;filter:none!important;-webkit-filter:none!important;}
+.settings-btn{opacity:1;color:var(--text-main);background:transparent;border:0;appearance:none;-webkit-appearance:none;}
+.settings-icon{display:block;width:23px;height:23px;fill:none;stroke:currentColor;stroke-width:1.85;stroke-linecap:round;stroke-linejoin:round;}
+
+.tab-bar{contain:paint;isolation:isolate;transition:opacity .16s ease,transform .18s ease,background .3s;}
+.tab-item{background:transparent!important;box-shadow:none!important;color:var(--text-sub);}
+.tab-item.active{background:transparent!important;box-shadow:none!important;color:var(--accent);}
+.tab-icon{width:24px;height:24px;margin:0;color:#1C1C1E;filter:none!important;display:flex;align-items:center;justify-content:center;}
+.tab-icon svg{display:block;width:23px;height:23px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;}
+.tab-label{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;color:inherit;}
+.tab-item.active .tab-icon{color:var(--accent);filter:none!important;}
+body.dark-mode .tab-item{color:rgba(235,235,245,.62);}
+body.dark-mode .tab-icon{color:#F2F2F7;}
+body.dark-mode .tab-item.active,body.dark-mode .tab-item.active .tab-icon{color:#0A84FF;}
+
+/* Native iOS keyboard owns the lower viewport. Hide, rather than lift, the fixed tab bar. */
+body.route-search-native .tab-bar{
+    opacity:0;visibility:hidden;pointer-events:none;
+    transform:translateX(-50%) translateY(calc(100% + 28px + env(safe-area-inset-bottom)));
+}
+
+.route-search-fab{contain:paint;isolation:isolate;color:var(--text-main);}
+.route-search-fab-icon{display:block;width:26px;height:26px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;}
+.route-search-floating-panel{contain:paint;isolation:isolate;}
+
+@media(max-width:390px){
+    .tab-icon{width:22px;height:22px;}
+    .tab-icon svg{width:21px;height:21px;}
+}
