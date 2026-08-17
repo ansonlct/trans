@@ -381,8 +381,8 @@ header{
 header::before{
     content:"";position:fixed;left:0;right:0;top:0;height:1px;background:var(--bg-color);pointer-events:none;
 }
-#page-title,.update-time,.settings-btn{position:relative;z-index:1;filter:none!important;-webkit-filter:none!important;}
-.settings-btn{opacity:1;color:var(--text-main);background:transparent;border:0;appearance:none;-webkit-appearance:none;}
+#page-title,.update-time{position:relative;z-index:1;filter:none!important;-webkit-filter:none!important;}
+.settings-btn{position:absolute;right:14px;top:8px;transform:none;margin:0;padding:6px;z-index:2;opacity:1;color:var(--text-main);background:transparent;border:0;appearance:none;-webkit-appearance:none;filter:none!important;-webkit-filter:none!important;}
 .settings-icon{display:block;width:23px;height:23px;fill:none;stroke:currentColor;stroke-width:1.85;stroke-linecap:round;stroke-linejoin:round;}
 
 .tab-bar{contain:paint;isolation:isolate;transition:opacity .16s ease,transform .18s ease,background .3s;}
@@ -410,3 +410,6 @@ body.route-search-native .tab-bar{
     .tab-icon{width:22px;height:22px;}
     .tab-icon svg{width:21px;height:21px;}
 }
+
+
+/* v6.8.3: keep settings control at the header right edge; FAB vertical drag is clamped in JS between header and bottom navigation. */

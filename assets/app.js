@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '6.8.1';
+const APP_VERSION = '6.8.3';
 
 function renderAppVersion() {
     const el = document.getElementById('app-version-value');
@@ -924,18 +924,12 @@ function setSettingsCacheView(showCache) {
             return;
         }
 
-        let completedJobs = 0;
-        const totalJobs = Math.max(1, jobs.length);
         const showRefreshProgress = () => {
             if (!updateEl || currentTab !== tabId) return;
-            const percent = Math.min(100, Math.round((completedJobs / totalJobs) * 100));
-            updateEl.innerText = `更新中 ${percent}%`;
+            updateEl.innerText = '更新中…';
         };
         showRefreshProgress();
-        const trackedJobs = jobs.map(job => Promise.resolve(job).finally(() => {
-            completedJobs += 1;
-            showRefreshProgress();
-        }));
+        const trackedJobs = jobs.map(job => Promise.resolve(job));
 
         const task = Promise.allSettled(trackedJobs).then(results => {
             lastRefreshAtByTab.set(tabId, Date.now());
@@ -2300,7 +2294,7 @@ function setSettingsCacheView(showCache) {
                     <div class="favorite-stop-name">${escapeHtml(fav.stopName)}</div>
                     <div id="${fareId}" class="favorite-stop-fare">${formatFareAmount(fav.fare)}</div>
                     <div class="favorite-stop-meta">往 ${escapeHtml(fav.dest || '')}</div>
-                    <div id="${etaId}" class="favorite-card-eta"><div class="status-msg" style="padding: 8px 0; text-align:left;">更新中 0%</div></div>
+                    <div id="${etaId}" class="favorite-card-eta"><div class="status-msg" style="padding: 8px 0; text-align:left;">更新中…</div></div>
                 </div>
             </div>`;
         }).join('');
@@ -3297,8 +3291,17 @@ function setSettingsCacheView(showCache) {
             const viewportWidth = vv ? Number(vv.width || window.innerWidth || 0) : Number(window.innerWidth || 0);
             const viewportHeight = vv ? Number(vv.height || window.innerHeight || 0) : Number(window.innerHeight || 0);
             const minX = viewportLeft + 8;
-            const minY = viewportTop + 8;
+            let minY = viewportTop + 8;
             const maxX = Math.max(minX, viewportLeft + viewportWidth - w - 8);
+            const header = document.querySelector('header');
+            if (header) {
+                const headerRect = header.getBoundingClientRect();
+                const visibleTop = viewportTop;
+                const visibleBottom = viewportTop + viewportHeight;
+                if (headerRect.height > 0 && headerRect.bottom > visibleTop && headerRect.top < visibleBottom) {
+                    minY = Math.max(minY, Math.min(visibleBottom - h - 8, Number(headerRect.bottom || 0) + 8));
+                }
+            }
             let maxY = Math.max(minY, viewportTop + viewportHeight - h - 8);
             const tabBar = document.querySelector('.tab-bar');
             if (tabBar) {
@@ -4439,7 +4442,7 @@ function setSettingsCacheView(showCache) {
         let html = '<div style="background:var(--bg-color);min-height:100%;padding-bottom:20px;">';
 
         if (etaLoading) {
-            html += '<div class="detail-eta-loading">車站已載入 · ETA 更新中 0%</div>';
+            html += '<div class="detail-eta-loading">車站已載入 · ETA 更新中…</div>';
             html += '<div style="background:var(--card-bg);border-top:1px solid var(--separator);">';
             processedStops.forEach(s => {
                 const stopName = s.name_tc || window.globalStopsMap[s.stop] || s.stop;
@@ -4456,7 +4459,7 @@ function setSettingsCacheView(showCache) {
                             ${renderStopFare(s)}
                         </div>
                         <div style="display:flex;align-items:center;white-space:nowrap;margin-left:auto;">
-                            <span class="detail-eta-pending">更新中 0%</span>${favoriteBtn}
+                            <span class="detail-eta-pending">更新中…</span>${favoriteBtn}
                         </div>
                     </div>
                 </div>`;
@@ -4508,12 +4511,11 @@ function setSettingsCacheView(showCache) {
     }
 
     function updateRouteDetailEtaProgress(container, completed, total) {
-        if (!container || !total) return;
-        const percent = Math.max(0, Math.min(100, Math.round((completed / total) * 100)));
+        if (!container) return;
         const heading = container.querySelector('.detail-eta-loading');
-        if (heading) heading.textContent = `車站已載入 · ETA 更新中 ${percent}%`;
+        if (heading) heading.textContent = '車站已載入 · ETA 更新中…';
         container.querySelectorAll('.detail-eta-pending').forEach(el => {
-            el.textContent = `更新中 ${percent}%`;
+            el.textContent = '更新中…';
         });
     }
 
@@ -4785,7 +4787,7 @@ function setSettingsCacheView(showCache) {
 
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
         window.addEventListener('load', () => {
-            navigator.serviceWorker.register('./sw.js?v=6.8.1', { updateViaCache: 'none' }).catch(err => {
+            navigator.serviceWorker.register('./sw.js?v=6.8.3', { updateViaCache: 'none' }).catch(err => {
                 console.warn('Service worker registration failed:', err);
             });
         });
