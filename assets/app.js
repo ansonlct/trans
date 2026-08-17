@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '6.8.0';
+const APP_VERSION = '6.8.1';
 
 function renderAppVersion() {
     const el = document.getElementById('app-version-value');
@@ -3003,7 +3003,11 @@ function setSettingsCacheView(showCache) {
             hideRouteKeyboard();
             hideRouteSearchSuggestions();
             const input = document.getElementById('route-search-input');
-            if (input && document.activeElement === input) input.blur();
+            if (input) {
+                input.readOnly = true;
+                input.setAttribute('inputmode', 'none');
+                if (document.activeElement === input) input.blur();
+            }
             window.routeSearchNativeMode = false;
             document.body.classList.remove('route-search-native');
             document.documentElement.style.setProperty('--native-keyboard-offset', '0px');
@@ -3025,6 +3029,7 @@ function setSettingsCacheView(showCache) {
         hideRouteSearchSuggestions();
         const input = document.getElementById('route-search-input');
         if (input) {
+            input.readOnly = true;
             input.setAttribute('inputmode', 'none');
             if (document.activeElement === input) input.blur();
         }
@@ -3042,7 +3047,10 @@ function setSettingsCacheView(showCache) {
         window.routeSearchNativeMode = false;
         document.body.classList.remove('route-search-native');
         const input = document.getElementById('route-search-input');
-        if (input) input.setAttribute('inputmode', 'none');
+        if (input) {
+            input.readOnly = true;
+            input.setAttribute('inputmode', 'none');
+        }
         showRouteKeyboard();
     }
 
@@ -3070,7 +3078,10 @@ function setSettingsCacheView(showCache) {
         if (currentTab !== 4) return;
         setRouteSearchFloatingOpen(true, { shield: true, pinned: false });
         const input = document.getElementById('route-search-input');
-        if (input) input.setAttribute('inputmode', 'none');
+        if (input) {
+            input.readOnly = true;
+            input.setAttribute('inputmode', 'none');
+        }
         window.routeSearchNativeMode = false;
         window.routeKeyboardForceTextInput = false;
         document.body.classList.remove('route-search-native');
@@ -3112,27 +3123,51 @@ function setSettingsCacheView(showCache) {
         }
     }
 
+    function prepareNativeRouteSearch(event) {
+        if (event) event.stopPropagation();
+        if (currentTab !== 4) return;
+        const input = document.getElementById('route-search-input');
+        if (!input) return;
+        // Keep this inside pointerdown: iOS is much more reliable when readonly/inputmode
+        // are changed before the browser performs its own user-initiated focus step.
+        input.readOnly = false;
+        input.setAttribute('inputmode', 'search');
+        input.setAttribute('enterkeyhint', 'search');
+        window.routeKeyboardForceTextInput = true;
+    }
+
     function activateNativeRouteSearch(event) {
         if (event) event.stopPropagation();
         if (currentTab !== 4) return;
-        setRouteSearchFloatingOpen(true, { shield: true, pinned: false });
         const input = document.getElementById('route-search-input');
         if (!input) return;
+
+        prepareNativeRouteSearch();
+        setRouteSearchFloatingOpen(true, { shield: true, pinned: false });
         window.routeSearchViewportBaseline = Math.max(Number(window.routeSearchViewportBaseline || 0), Number(window.innerHeight || 0), Number(document.documentElement.clientHeight || 0));
-        window.routeKeyboardForceTextInput = true;
         window.routeSearchNativeMode = true;
-        hideRouteKeyboard();
         document.body.classList.add('route-search-native');
-        input.setAttribute('inputmode', 'text');
-        // iOS/Android need a fresh focus after inputmode changes before showing the native IME.
+
+        // Focus synchronously while we are still handling the user's tap/click.
+        // A timeout-only focus often fails to summon the iOS software keyboard.
         if (document.activeElement !== input) {
-            setTimeout(() => {
-                try { input.focus({ preventScroll: true }); } catch (e) { input.focus(); }
-                setTimeout(syncNativeKeyboardOffset, 60);
-            }, 0);
-        } else {
-            setTimeout(syncNativeKeyboardOffset, 30);
+            try { input.focus({ preventScroll: true }); } catch (e) { input.focus(); }
         }
+        try {
+            const end = input.value.length;
+            input.setSelectionRange(end, end);
+        } catch (e) {}
+
+        hideRouteKeyboard();
+        syncNativeKeyboardOffset();
+        requestAnimationFrame(syncNativeKeyboardOffset);
+        setTimeout(() => {
+            // Secondary layout sync only; do not depend on delayed focus to open the IME.
+            if (window.routeSearchNativeMode && document.activeElement !== input) {
+                try { input.focus({ preventScroll: true }); } catch (e) { input.focus(); }
+            }
+            syncNativeKeyboardOffset();
+        }, 80);
     }
 
     function showStationTextKeyboard() {
@@ -3145,6 +3180,8 @@ function setSettingsCacheView(showCache) {
             if (!input || document.activeElement === input) return;
             if (window.routeSearchNativeMode) {
                 window.routeSearchNativeMode = false;
+                input.readOnly = true;
+                input.setAttribute('inputmode', 'none');
                 document.body.classList.remove('route-search-native');
                 document.documentElement.style.setProperty('--native-keyboard-offset', '0px');
                 const panel = document.getElementById('route-search-panel');
@@ -3558,6 +3595,7 @@ function setSettingsCacheView(showCache) {
         window.routeKeyboardForceTextInput = false;
         window.routeSearchNativeMode = false;
         document.body.classList.remove('route-search-native');
+        input.readOnly = true;
         input.setAttribute('inputmode', 'none');
         input.value = '';
         onTab4Search();
@@ -4724,7 +4762,7 @@ function setSettingsCacheView(showCache) {
 
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
         window.addEventListener('load', () => {
-            navigator.serviceWorker.register('./sw.js?v=6.8.0', { updateViaCache: 'none' }).catch(err => {
+            navigator.serviceWorker.register('./sw.js?v=6.8.1', { updateViaCache: 'none' }).catch(err => {
                 console.warn('Service worker registration failed:', err);
             });
         });

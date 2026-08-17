@@ -1,4 +1,4 @@
-# Transport App v6.8.0
+# Transport App v6.8.1
 
 ## v6.7.7 Citybus fare / 7-day timetable / NLB
 
@@ -215,6 +215,12 @@ transport-app/
 - 小巴 ETA 改為最多 6 個車站並行，避免一次開數十個請求。
 - 小巴路線詳情 / route-stop 本機持久快取由 1 小時延長至 24 小時。
 - 路線目錄停止為小巴逐站預查 ETA，避免背景請求與使用者打開詳情互相爭網絡。
+
+## v6.8.1
+
+- 改善 iPhone／iOS 原生文字鍵盤：搜尋格在 pointerdown 先解除 readonly 並切換為 search inputmode，再於使用者手勢內同步 focus，避免依賴延遲 focus 而間歇性不彈鍵盤。
+- 「灰」toggle 改名為「無班次變灰」，並更新提示／無障礙名稱。
+- 底部分頁列改成參考 iOS Liquid Glass 的浮動膠囊樣式：大圓角、半透明模糊、玻璃高光、active tab 玻璃底及深色模式配色。
 
 ## v6.8.0
 
