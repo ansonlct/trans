@@ -1,6 +1,6 @@
 {
-  "updatedAt": "2026-08-17T21:53:02.447Z",
-  "serviceDay": "2026-08-17",
+  "updatedAt": "2026-08-18T21:49:53.640Z",
+  "serviceDay": "2026-08-18",
   "serviceDayCutoffHKT": "06:00",
   "operatorStatus": {
     "kmb": {
@@ -16,8 +16,8 @@
       "total": 1
     },
     "nlb": {
-      "status": "partial",
-      "fresh": 0,
+      "status": "success",
+      "fresh": 1,
       "available": 1,
       "total": 1
     },
@@ -48,7 +48,7 @@
   },
   "datasets": {
     "kmb-route.json": {
-      "records": 1609,
+      "records": 1608,
       "routeNumbers": 795,
       "stations": 0,
       "source": "https://data.etabus.gov.hk/v1/transport/kmb/route/",
@@ -81,12 +81,11 @@
       "records": 64,
       "routeNumbers": 38,
       "stations": 0,
-      "source": null,
+      "source": "https://rt.data.gov.hk/v2/transport/nlb/route.php?action=list",
       "required": true,
       "available": true,
-      "fresh": false,
-      "stale": true,
-      "error": "https://rt.data.gov.hk/v2/transport/nlb/route.php?action=list -> HTTP 504"
+      "fresh": true,
+      "stale": false
     },
     "gmb-route-HKI.json": {
       "records": 108,
