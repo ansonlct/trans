@@ -1,6 +1,6 @@
 {
-  "updatedAt": "2026-08-25T21:54:51.453Z",
-  "serviceDay": "2026-08-25",
+  "updatedAt": "2026-08-27T00:59:39.251Z",
+  "serviceDay": "2026-08-27",
   "serviceDayCutoffHKT": "06:00",
   "operatorStatus": {
     "kmb": {
@@ -34,7 +34,7 @@
       "stations": 6749
     },
     "citybus": {
-      "routeNumbers": 406,
+      "routeNumbers": 407,
       "stations": 2267
     },
     "nlb": {
@@ -68,8 +68,8 @@
       "stale": false
     },
     "ctb-route.json": {
-      "records": 406,
-      "routeNumbers": 406,
+      "records": 407,
+      "routeNumbers": 407,
       "stations": 0,
       "source": "https://rt.data.gov.hk/v2/transport/citybus/route/CTB",
       "required": true,
