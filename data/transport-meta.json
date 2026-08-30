@@ -1,6 +1,6 @@
 {
-  "updatedAt": "2026-08-29T23:33:07.215Z",
-  "serviceDay": "2026-08-30",
+  "updatedAt": "2026-08-30T23:44:20.144Z",
+  "serviceDay": "2026-08-31",
   "serviceDayCutoffHKT": "06:00",
   "operatorStatus": {
     "kmb": {
@@ -30,8 +30,8 @@
   },
   "loadedCounts": {
     "kmb": {
-      "routeNumbers": 791,
-      "stations": 6749
+      "routeNumbers": 792,
+      "stations": 6750
     },
     "citybus": {
       "routeNumbers": 406,
@@ -42,14 +42,14 @@
       "stations": 195
     },
     "gmb": {
-      "routeNumbers": 572,
+      "routeNumbers": 573,
       "stations": 4288
     }
   },
   "datasets": {
     "kmb-route.json": {
-      "records": 1602,
-      "routeNumbers": 791,
+      "records": 1605,
+      "routeNumbers": 792,
       "stations": 0,
       "source": "https://data.etabus.gov.hk/v1/transport/kmb/route/",
       "required": true,
@@ -58,9 +58,9 @@
       "stale": false
     },
     "kmb-stop.json": {
-      "records": 6749,
+      "records": 6750,
       "routeNumbers": 0,
-      "stations": 6749,
+      "stations": 6750,
       "source": "https://data.etabus.gov.hk/v1/transport/kmb/stop",
       "required": true,
       "available": true,
@@ -108,8 +108,8 @@
       "stale": false
     },
     "gmb-route-NT.json": {
-      "records": 328,
-      "routeNumbers": 329,
+      "records": 329,
+      "routeNumbers": 330,
       "stations": 0,
       "source": "https://data.etagmb.gov.hk/route/NT",
       "required": true,
