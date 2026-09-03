@@ -1,6 +1,6 @@
 {
-  "updatedAt": "2026-09-02T23:30:47.867Z",
-  "serviceDay": "2026-09-03",
+  "updatedAt": "2026-09-03T23:28:39.026Z",
+  "serviceDay": "2026-09-04",
   "serviceDayCutoffHKT": "06:00",
   "operatorStatus": {
     "kmb": {
@@ -22,8 +22,8 @@
       "total": 1
     },
     "gmb": {
-      "status": "success",
-      "fresh": 3,
+      "status": "partial",
+      "fresh": 2,
       "available": 3,
       "total": 3
     }
@@ -101,11 +101,12 @@
       "records": 133,
       "routeNumbers": 134,
       "stations": 0,
-      "source": "https://data.etagmb.gov.hk/route/KLN",
+      "source": null,
       "required": true,
       "available": true,
-      "fresh": true,
-      "stale": false
+      "fresh": false,
+      "stale": true,
+      "error": "https://data.etagmb.gov.hk/route/KLN -> HTTP 504"
     },
     "gmb-route-NT.json": {
       "records": 329,
