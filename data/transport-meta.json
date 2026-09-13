@@ -1,6 +1,6 @@
 {
-  "updatedAt": "2026-09-12T23:12:34.332Z",
-  "serviceDay": "2026-09-13",
+  "updatedAt": "2026-09-13T23:22:41.234Z",
+  "serviceDay": "2026-09-14",
   "serviceDayCutoffHKT": "06:00",
   "operatorStatus": {
     "kmb": {
@@ -42,7 +42,7 @@
       "stations": 195
     },
     "gmb": {
-      "routeNumbers": 574,
+      "routeNumbers": 575,
       "stations": 4288
     }
   },
@@ -108,8 +108,8 @@
       "stale": false
     },
     "gmb-route-NT.json": {
-      "records": 330,
-      "routeNumbers": 331,
+      "records": 331,
+      "routeNumbers": 332,
       "stations": 0,
       "source": "https://data.etagmb.gov.hk/route/NT",
       "required": true,
