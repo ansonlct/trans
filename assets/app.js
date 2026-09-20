@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '6.8.3';
+const APP_VERSION = '6.9.1';
 
 function renderAppVersion() {
     const el = document.getElementById('app-version-value');
@@ -361,6 +361,43 @@ function setSettingsCacheView(showCache) {
     const MTR_STATION_ALIASES = { 'HOM': 'HUH' };
     const normalizeMtrStationCode = (code) => MTR_STATION_ALIASES[code] || code;
 
+    // 「我要回家」：由各東鐵站前往大學站的預計車程（分鐘）。
+    // 以一般直達東鐵行車時間作顯示估算，實際到達時間會受行車調度影響。
+    const MTR_UNIVERSITY_TRAVEL_MINUTES = {
+        'ADM': 23, 'EXC': 22, 'HUH': 19, 'HOM': 19, 'MKK': 16, 'KOT': 13,
+        'TAW': 8, 'SHT': 6, 'FOT': 4, 'RAC': 4,
+        'TAP': 7, 'TWO': 9, 'FAN': 16, 'SHS': 18, 'LOW': 21, 'LMC': 26
+    };
+
+    // 南 -> 北的相對次序；RAC 與 FOT 均位於沙田與大學之間的不同支線。
+    const MTR_UNIVERSITY_ROUTE_RANK = {
+        'ADM': 0, 'EXC': 1, 'HUH': 2, 'HOM': 2, 'MKK': 3, 'KOT': 4,
+        'TAW': 5, 'SHT': 6, 'FOT': 7, 'RAC': 7, 'UNI': 8, 'TAP': 9,
+        'TWO': 10, 'FAN': 11, 'SHS': 12, 'LOW': 13, 'LMC': 13
+    };
+
+    function mtrTrainWillPassUniversity(origin, direction, destination) {
+        const from = MTR_UNIVERSITY_ROUTE_RANK[normalizeMtrStationCode(origin)];
+        const to = MTR_UNIVERSITY_ROUTE_RANK[normalizeMtrStationCode(destination)];
+        const uni = MTR_UNIVERSITY_ROUTE_RANK.UNI;
+        if (!Number.isFinite(from) || !Number.isFinite(to) || from === uni) return false;
+        if (direction === 'UP') return from < uni && to >= uni;
+        if (direction === 'DOWN') return from > uni && to <= uni;
+        return false;
+    }
+
+    function estimateMtrUniversityArrival(trainTime, origin, direction, destination) {
+        const stationCode = normalizeMtrStationCode(origin);
+        const travelMinutes = MTR_UNIVERSITY_TRAVEL_MINUTES[stationCode];
+        if (!Number.isFinite(travelMinutes) || !mtrTrainWillPassUniversity(stationCode, direction, destination)) return null;
+        const departureMs = new Date(trainTime).getTime();
+        if (!Number.isFinite(departureMs)) return null;
+        return {
+            time: formatTime(new Date(departureMs + travelMinutes * 60000).toISOString()),
+            minutes: travelMinutes
+        };
+    }
+
     const mtrConfig = {
         'ADM': { dir: 'UP', label: '往羅湖/落馬洲' }, 'EXC': { dir: 'UP', label: '往羅湖/落馬洲' },
         'HUH': { dir: 'UP', label: '往羅湖/落馬洲' }, 'HOM': { dir: 'UP', label: '往羅湖/落馬洲' },
@@ -682,12 +719,27 @@ function setSettingsCacheView(showCache) {
         if (etas.length === 0) {
             element.innerHTML = '<div class="status-msg">暫無班次</div>';
         } else {
+            const isReturnHomeKmb = element && element.id === 'kmb-list-2';
             element.innerHTML = etas.slice(0, 3).map(bus => {
                 const mins = getMins(bus.eta);
                 const isUrgent = mins === '即將' || mins === '0分' || mins === '1分' || mins === '2分' || mins === '3分';
                 const scheduled = isScheduledRemarkPair(bus.rmk_tc || '', bus.rmk_en || '');
                 const rawRemark = getInlineRemarkText(bus.rmk_tc || '', bus.rmk_en || '');
                 const extraRemark = rawRemark && !scheduled ? `<span class="service-remark">${escapeHtml(rawRemark)}</span>` : '';
+
+                if (isReturnHomeKmb) {
+                    const departure = formatTime(bus.eta);
+                    return `
+                    <div class="schedule-item kmb-home-item">
+                        <div class="kmb-home-line" aria-label="${mins}，${departure}${scheduled ? '，預定班次' : ''}">
+                            <span class="kmb-home-eta">${renderCardMinutesLabel(mins, { isUrgent, isScheduled: scheduled })}</span>
+                            <span class="kmb-home-clock">${departure}</span>
+                            ${scheduled ? '<span class="kmb-home-remark">預定班次</span>' : '<span class="kmb-home-remark"></span>'}
+                        </div>
+                        ${extraRemark}
+                    </div>`;
+                }
+
                 return `
                 <div class="schedule-item">
                     <div class="schedule-line">
@@ -864,9 +916,38 @@ function setSettingsCacheView(showCache) {
             }
             
             element.innerHTML = schedule.map(t => {
-                let dest = MTR_STATION_NAMES[normalizeMtrStationCode(t.dest)] || t.dest;
+                const normalizedDest = normalizeMtrStationCode(t.dest);
+                let dest = MTR_STATION_NAMES[normalizedDest] || t.dest;
                 const mins = getMins(t.time);
                 const isUrgent = mins === '即將' || mins === '0分' || mins === '1分' || mins === '2分' || mins === '3分';
+                const universityArrival = apiStation !== 'UNI'
+                    ? estimateMtrUniversityArrival(t.time, apiStation, direction, normalizedDest)
+                    : null;
+                const isHomeMtr = apiStation !== 'UNI';
+                if (isHomeMtr) {
+                    const platformRaw = String(t.plat || '').trim().replace(/[()]/g, '');
+                    const platformBadge = platformRaw
+                        ? `<span class="mtr-trip-platform-badge" aria-label="月台 ${escapeHtml(platformRaw)}">${escapeHtml(platformRaw)}</span>`
+                        : '';
+                    const departureCompact = formatTime(t.time);
+                    const journeyTail = universityArrival ? `
+                        <span class="mtr-trip-arrival"><span class="mtr-trip-arrow" aria-hidden="true">→</span><span>大學</span><strong>${universityArrival.time}</strong></span>
+                        <span class="mtr-trip-divider" aria-hidden="true">|</span>
+                        <span class="mtr-trip-duration">約 ${universityArrival.minutes} 分鐘</span>` : '';
+                    const arrivalAria = universityArrival
+                        ? `，預計到大學 ${universityArrival.time}，約 ${universityArrival.minutes} 分鐘`
+                        : '';
+
+                    return `
+                    <div class="schedule-item mtr-home-item">
+                        <div class="mtr-trip-line${isUrgent ? ' is-urgent' : ''}" aria-label="${mins}，${departureCompact}${arrivalAria}，往 ${escapeHtml(dest)}，月台 ${escapeHtml(platformRaw || '-')}">
+                            <span class="mtr-trip-eta">${renderCardMinutesLabel(mins, { isUrgent, isScheduled: false })}</span>
+                            <span class="mtr-trip-departure">${departureCompact}</span>
+                            <span class="mtr-trip-home">${journeyTail}</span>
+                            <span class="mtr-trip-route-right"><span class="mtr-trip-prefix">往</span><span class="mtr-trip-dest">${escapeHtml(dest)}</span><span class="mtr-trip-platform-slot">${platformBadge}</span></span>
+                        </div>
+                    </div>`;
+                }
 
                 return `
                 <div class="schedule-item">
@@ -4787,7 +4868,7 @@ function setSettingsCacheView(showCache) {
 
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
         window.addEventListener('load', () => {
-            navigator.serviceWorker.register('./sw.js?v=6.8.3', { updateViaCache: 'none' }).catch(err => {
+            navigator.serviceWorker.register('./sw.js?v=6.9.1', { updateViaCache: 'none' }).catch(err => {
                 console.warn('Service worker registration failed:', err);
             });
         });
