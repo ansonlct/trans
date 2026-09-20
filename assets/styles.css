@@ -655,7 +655,7 @@ body.dark-mode .mtr-trip-departure{color:rgba(255,255,255,.88)}
 }
 
 
-/* v6.9.1: return-home rows follow the requested scan order.
+/* v6.9.2 base: return-home rows follow the requested scan order.
    MTR: ETA | departure | University arrival + journey time | destination/platform (right aligned).
    KMB: ETA | departure | scheduled status. Both lists use the same grey row separators. */
 #tab-2 #mtr-list-2 .mtr-home-item + .mtr-home-item,
@@ -764,4 +764,180 @@ body.dark-mode .mtr-trip-departure{color:rgba(255,255,255,.88)}
     #tab-2 #mtr-list-2 .mtr-trip-duration{font-size:.65rem}
     #tab-2 #mtr-list-2 .mtr-trip-platform-slot{width:22px;min-width:22px}
     #tab-2 #mtr-list-2 .mtr-trip-platform-badge{width:22px;height:19px;font-size:.72rem;line-height:19px}
+}
+
+/* v6.9.2: slightly increase return-home row spacing and keep MTR/KMB identical. */
+#tab-2 #mtr-list-2 .mtr-trip-line,
+#tab-2 #kmb-list-2 .kmb-home-line{
+    min-height:44px;
+}
+
+
+/* v6.9.3: vertically center KMB return-home rows exactly like MTR. */
+#tab-2 #kmb-list-2 .kmb-home-line{
+    align-items:center;
+}
+#tab-2 #kmb-list-2 .kmb-home-eta{
+    align-items:center;
+}
+#tab-2 #kmb-list-2 .kmb-home-clock,
+#tab-2 #kmb-list-2 .kmb-home-remark{
+    align-self:center;
+}
+
+/* v6.9.5: fix 白石角出發 layout regression.
+   The previous v6.9.4 block was accidentally written with literal "\\n" text, so the
+   browser parsed it as a broken CSS rule and ignored the outbound one-line layout.
+   Keep the 272A rows exactly in sync with 「我要回家」 and apply the same compact
+   one-line treatment to the 大學站 train rows. */
+
+/* KMB 272A — shared visual contract for both main directions. */
+#tab-1 #kmb-list-1 .kmb-home-item,
+#tab-2 #kmb-list-2 .kmb-home-item{
+    padding:0;
+}
+#tab-1 #kmb-list-1 .kmb-home-item + .kmb-home-item,
+#tab-2 #kmb-list-2 .kmb-home-item + .kmb-home-item{
+    margin-top:0;
+    border-top:1px solid color-mix(in srgb,var(--separator) 64%,transparent);
+}
+#tab-1 #kmb-list-1 .kmb-home-line,
+#tab-2 #kmb-list-2 .kmb-home-line{
+    display:flex;
+    align-items:center;
+    min-height:44px;
+    gap:0;
+    width:100%;
+    min-width:0;
+    white-space:nowrap;
+    font-size:1rem;
+    line-height:1.32;
+    font-weight:400;
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif;
+}
+#tab-1 #kmb-list-1 .kmb-home-eta,
+#tab-2 #kmb-list-2 .kmb-home-eta{
+    flex:0 0 58px;
+    display:inline-flex;
+    align-items:center;
+    justify-content:flex-start;
+}
+#tab-1 #kmb-list-1 .kmb-home-clock,
+#tab-2 #kmb-list-2 .kmb-home-clock{
+    flex:0 0 auto;
+    margin-left:10px;
+    color:var(--text-main);
+    font-size:.88rem;
+    font-weight:400;
+    white-space:nowrap;
+    align-self:center;
+}
+#tab-1 #kmb-list-1 .kmb-home-remark,
+#tab-2 #kmb-list-2 .kmb-home-remark{
+    flex:0 0 auto;
+    margin-left:14px;
+    color:var(--text-sub);
+    font-size:.78rem;
+    font-weight:400;
+    white-space:nowrap;
+    align-self:center;
+}
+
+/* MTR 大學站 — same row rhythm and scan order used by the return-home page. */
+#tab-1 #mtr-list-1 .mtr-home-item + .mtr-home-item{
+    margin-top:0;
+    border-top:1px solid color-mix(in srgb,var(--separator) 64%,transparent);
+}
+#tab-1 #mtr-list-1 .mtr-trip-line{
+    display:flex;
+    align-items:center;
+    gap:0;
+    min-height:44px;
+    width:100%;
+    min-width:0;
+    white-space:nowrap;
+    font-size:1rem;
+    line-height:1.32;
+    font-weight:400;
+    letter-spacing:0;
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif;
+}
+#tab-1 #mtr-list-1 .mtr-trip-eta{
+    flex:0 0 58px;
+    display:inline-flex;
+    align-items:center;
+}
+#tab-1 #mtr-list-1 .mtr-trip-eta .eta-main-text{font-weight:400;letter-spacing:-.2px}
+#tab-1 #mtr-list-1 .mtr-trip-eta .eta-main-number{font-size:1.22rem;font-weight:400;line-height:1}
+#tab-1 #mtr-list-1 .mtr-trip-eta .eta-main-unit{font-size:.78rem;font-weight:400;margin-left:1px}
+#tab-1 #mtr-list-1 .mtr-trip-line .eta-main-text.urgent{font-weight:400}
+#tab-1 #mtr-list-1 .mtr-trip-departure{
+    flex:0 0 auto;
+    margin-left:10px;
+    color:var(--text-main);
+    font-size:.88rem;
+    font-weight:400;
+    letter-spacing:0;
+    align-self:center;
+}
+#tab-1 #mtr-list-1 .mtr-trip-home{flex:0 0 auto;margin-left:0}
+#tab-1 #mtr-list-1 .mtr-trip-route-right{
+    margin-left:auto;
+    padding-left:10px;
+    display:inline-flex;
+    align-items:center;
+    justify-content:flex-end;
+    gap:5px;
+    min-width:0;
+    flex:0 0 auto;
+}
+#tab-1 #mtr-list-1 .mtr-trip-prefix{color:var(--text-sub);font-size:.78rem;font-weight:400}
+#tab-1 #mtr-list-1 .mtr-trip-dest{font-size:.96rem;font-weight:400;letter-spacing:0}
+#tab-1 #mtr-list-1 .mtr-trip-platform-slot{width:24px;min-width:24px}
+#tab-1 #mtr-list-1 .mtr-trip-platform-badge{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif}
+
+@media(max-width:430px){
+    #tab-1 #kmb-list-1 .kmb-home-eta,
+    #tab-2 #kmb-list-2 .kmb-home-eta,
+    #tab-1 #mtr-list-1 .mtr-trip-eta{flex-basis:56px}
+
+    #tab-1 #kmb-list-1 .kmb-home-clock,
+    #tab-2 #kmb-list-2 .kmb-home-clock,
+    #tab-1 #mtr-list-1 .mtr-trip-departure{margin-left:8px;font-size:.84rem}
+
+    #tab-1 #kmb-list-1 .kmb-home-remark,
+    #tab-2 #kmb-list-2 .kmb-home-remark{margin-left:12px;font-size:.76rem}
+
+    #tab-1 #mtr-list-1 .mtr-trip-route-right{padding-left:8px;gap:4px}
+    #tab-1 #mtr-list-1 .mtr-trip-dest{font-size:.93rem}
+}
+
+@media(max-width:370px){
+    #tab-1 #kmb-list-1 .kmb-home-eta,
+    #tab-2 #kmb-list-2 .kmb-home-eta,
+    #tab-1 #mtr-list-1 .mtr-trip-eta{flex-basis:50px}
+
+    #tab-1 #kmb-list-1 .kmb-home-clock,
+    #tab-2 #kmb-list-2 .kmb-home-clock,
+    #tab-1 #mtr-list-1 .mtr-trip-departure{margin-left:6px;font-size:.77rem}
+
+    #tab-1 #kmb-list-1 .kmb-home-remark,
+    #tab-2 #kmb-list-2 .kmb-home-remark{margin-left:10px;font-size:.70rem}
+
+    #tab-1 #mtr-list-1 .mtr-trip-eta .eta-main-number{font-size:1.08rem}
+    #tab-1 #mtr-list-1 .mtr-trip-eta .eta-main-unit{font-size:.72rem}
+    #tab-1 #mtr-list-1 .mtr-trip-route-right{padding-left:6px;gap:3px}
+    #tab-1 #mtr-list-1 .mtr-trip-prefix{font-size:.70rem}
+    #tab-1 #mtr-list-1 .mtr-trip-dest{font-size:.86rem}
+    #tab-1 #mtr-list-1 .mtr-trip-platform-slot{width:21px;min-width:21px}
+}
+
+@media(min-width:371px) and (max-width:390px){
+    #tab-1 #mtr-list-1 .mtr-trip-eta{flex-basis:50px}
+    #tab-1 #mtr-list-1 .mtr-trip-departure{margin-left:5px;font-size:.82rem}
+    #tab-1 #mtr-list-1 .mtr-trip-route-right{padding-left:4px;gap:3px}
+    #tab-1 #mtr-list-1 .mtr-trip-prefix{font-size:.68rem}
+    #tab-1 #mtr-list-1 .mtr-trip-dest{font-size:.88rem}
+    #tab-1 #mtr-list-1 .mtr-trip-platform-slot{width:22px;min-width:22px}
+    #tab-1 #mtr-list-1 .mtr-trip-platform-badge{width:22px;height:19px;font-size:.72rem;line-height:19px}
 }
