@@ -941,3 +941,155 @@ body.dark-mode .mtr-trip-departure{color:rgba(255,255,255,.88)}
     #tab-1 #mtr-list-1 .mtr-trip-platform-slot{width:22px;min-width:22px}
     #tab-1 #mtr-list-1 .mtr-trip-platform-badge{width:22px;height:19px;font-size:.72rem;line-height:19px}
 }
+
+
+/* v6.9.6 — KMB home ETA alignment + route 900 stop selector. */
+#tab-1 #kmb-list-1 .kmb-home-line,
+#tab-2 #kmb-list-2 .kmb-home-line,
+#tab-2 #kmb-list-900 .kmb-home-line{
+    display:grid;
+    grid-template-columns:58px 62px minmax(0,1fr);
+    column-gap:10px;
+    align-items:center;
+    min-height:44px;
+    width:100%;
+    min-width:0;
+    white-space:nowrap;
+}
+#tab-1 #kmb-list-1 .kmb-home-eta,
+#tab-2 #kmb-list-2 .kmb-home-eta,
+#tab-2 #kmb-list-900 .kmb-home-eta{
+    grid-column:1;
+    width:auto;
+    min-width:0;
+    margin:0;
+    justify-self:start;
+    align-self:center;
+}
+#tab-1 #kmb-list-1 .kmb-home-clock,
+#tab-2 #kmb-list-2 .kmb-home-clock,
+#tab-2 #kmb-list-900 .kmb-home-clock{
+    grid-column:2;
+    width:auto;
+    min-width:0;
+    margin:0;
+    justify-self:start;
+    align-self:center;
+}
+#tab-1 #kmb-list-1 .kmb-home-remark,
+#tab-2 #kmb-list-2 .kmb-home-remark,
+#tab-2 #kmb-list-900 .kmb-home-remark{
+    grid-column:3;
+    width:auto;
+    min-width:0;
+    margin:0;
+    justify-self:start;
+    align-self:center;
+}
+#tab-2 #kmb-list-900 .kmb-home-item{padding:0}
+#tab-2 #kmb-list-900 .kmb-home-item + .kmb-home-item{
+    margin-top:0;
+    border-top:1px solid color-mix(in srgb,var(--separator) 64%,transparent);
+}
+#tab-2 .kmb900-header{gap:0}
+#tab-2 .kmb900-header .header-text{flex:0 0 auto}
+#tab-2 .kmb900-header .kmb-station-select{
+    min-width:0;
+    max-width:165px;
+    flex:1 1 150px;
+    font-size:.96rem;
+    padding-left:10px;
+    padding-right:28px;
+    margin-left:8px;
+    margin-right:8px;
+}
+#tab-2 .kmb900-header .stop-detail{
+    flex:0 0 auto;
+    white-space:nowrap;
+}
+@media(max-width:390px){
+    #tab-1 #kmb-list-1 .kmb-home-line,
+    #tab-2 #kmb-list-2 .kmb-home-line,
+    #tab-2 #kmb-list-900 .kmb-home-line{
+        grid-template-columns:50px 56px minmax(0,1fr);
+        column-gap:7px;
+    }
+    #tab-2 .kmb900-header .kmb-station-select{
+        max-width:138px;
+        font-size:.88rem;
+        margin-left:6px;
+        margin-right:6px;
+    }
+}
+
+
+/* v6.9.7 — polish route 900 header and bring outbound GMB cards onto the main ETA layout. */
+#tab-2 .kmb900-header .kmb-station-select{
+    flex:0 1 165px;
+}
+#tab-2 .kmb900-header .stop-detail{
+    margin-left:auto;
+}
+
+/* 白石角出發：28A / 28S use the same three aligned information columns as 272A. */
+#tab-1 #gmb-list-28a .gmb-home-item,
+#tab-1 #gmb-list-28s .gmb-home-item{
+    padding:0;
+}
+#tab-1 #gmb-list-28a .gmb-home-item + .gmb-home-item,
+#tab-1 #gmb-list-28s .gmb-home-item + .gmb-home-item{
+    margin-top:0;
+    border-top:1px solid color-mix(in srgb,var(--separator) 64%,transparent);
+}
+#tab-1 #gmb-list-28a .gmb-home-line,
+#tab-1 #gmb-list-28s .gmb-home-line{
+    display:grid;
+    grid-template-columns:58px 62px minmax(0,1fr);
+    column-gap:10px;
+    align-items:center;
+    min-height:44px;
+    width:100%;
+    min-width:0;
+    white-space:nowrap;
+    font-size:1rem;
+    line-height:1.32;
+    font-weight:400;
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif;
+}
+#tab-1 #gmb-list-28a .gmb-home-eta,
+#tab-1 #gmb-list-28s .gmb-home-eta{
+    grid-column:1;
+    display:inline-flex;
+    align-items:center;
+    justify-self:start;
+    min-width:0;
+}
+#tab-1 #gmb-list-28a .gmb-home-clock,
+#tab-1 #gmb-list-28s .gmb-home-clock{
+    grid-column:2;
+    justify-self:start;
+    color:var(--text-main);
+    font-size:.88rem;
+    font-weight:400;
+    white-space:nowrap;
+}
+#tab-1 #gmb-list-28a .gmb-home-remark,
+#tab-1 #gmb-list-28s .gmb-home-remark{
+    grid-column:3;
+    justify-self:start;
+    color:var(--text-sub);
+    font-size:.78rem;
+    font-weight:400;
+    white-space:nowrap;
+}
+@media(max-width:390px){
+    #tab-1 #gmb-list-28a .gmb-home-line,
+    #tab-1 #gmb-list-28s .gmb-home-line{
+        grid-template-columns:50px 56px minmax(0,1fr);
+        column-gap:7px;
+    }
+    #tab-1 #gmb-list-28a .gmb-home-clock,
+    #tab-1 #gmb-list-28s .gmb-home-clock{font-size:.84rem}
+    #tab-1 #gmb-list-28a .gmb-home-remark,
+    #tab-1 #gmb-list-28s .gmb-home-remark{font-size:.76rem}
+}

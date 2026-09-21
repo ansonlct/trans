@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '6.9.5';
+const APP_VERSION = '6.9.7';
 
 function renderAppVersion() {
     const el = document.getElementById('app-version-value');
@@ -354,6 +354,9 @@ function setSettingsCacheView(showCache) {
     let validKmbStopId_Uni = null;
     let mtrUniDirection = 'DOWN';
     let selectedReturnStation = 'ADM';
+    let selectedKmb900StopId = null;
+    let kmb900Stops = [];
+    let kmb900StopsPromise = null;
     window.gmbResolvedStops = {};
 
     // MTR 官方 East Rail Line 站碼：紅磡為 HUH；保留 HOM 作舊版別名，避免舊資料出錯。
@@ -366,13 +369,43 @@ function setSettingsCacheView(showCache) {
     const MTR_STATION_ALIASES = { 'HOM': 'HUH' };
     const normalizeMtrStationCode = (code) => MTR_STATION_ALIASES[code] || code;
 
-    // 「我要回家」：由各東鐵站前往大學站的預計車程（分鐘）。
-    // 以一般直達東鐵行車時間作顯示估算，實際到達時間會受行車調度影響。
+    // 「我要回家」：MTR 官方 Journey Planner 車站 ID。
+    // 大學站 = 71；其餘 ID 對應港鐵 Journey Planner / service-hours 使用的 station ID。
+    const MTR_JOURNEY_PLANNER_STATION_IDS = {
+        'ADM': 2, 'EXC': 94, 'HUH': 64, 'HOM': 64, 'MKK': 65, 'KOT': 8,
+        'TAW': 67, 'SHT': 68, 'FOT': 69, 'RAC': 70, 'UNI': 71, 'TAP': 72,
+        'TWO': 73, 'FAN': 74, 'SHS': 75, 'LOW': 76, 'LMC': 78
+    };
+
+    // 只作官方 Journey Planner 暫時無法連線時的後備值；正常情況不再用此表作主要車程。
     const MTR_UNIVERSITY_TRAVEL_MINUTES = {
         'ADM': 23, 'EXC': 22, 'HUH': 19, 'HOM': 19, 'MKK': 16, 'KOT': 13,
         'TAW': 8, 'SHT': 6, 'FOT': 4, 'RAC': 4,
         'TAP': 7, 'TWO': 9, 'FAN': 16, 'SHS': 18, 'LOW': 21, 'LMC': 26
     };
+
+    async function getMtrOfficialUniversityTravelMinutes(origin) {
+        const stationCode = normalizeMtrStationCode(origin);
+        const originId = MTR_JOURNEY_PLANNER_STATION_IDS[stationCode];
+        const universityId = MTR_JOURNEY_PLANNER_STATION_IDS.UNI;
+        const fallback = MTR_UNIVERSITY_TRAVEL_MINUTES[stationCode];
+        if (!originId || !universityId || stationCode === 'UNI') return fallback;
+
+        const url = `https://www.mtr.com.hk/share/customer/jp/api/HRRoutes/?o=${originId}&d=${universityId}&lang=E`;
+        try {
+            // Journey Planner 車程不需要跟每班車刷新；12 小時 cache 已足夠，
+            // 同時每次重新載入仍可在 MTR 更改行車時間後自動取得新值。
+            const data = await fetchJsonCached(url, { ttl: 12 * 60 * 60 * 1000, timeout: 6000 });
+            const route = data && Array.isArray(data.routes) ? data.routes[0] : null;
+            const officialMinutes = Number(route && route.time);
+            if (Number.isFinite(officialMinutes) && officialMinutes > 0 && officialMinutes < 120) {
+                return Math.round(officialMinutes);
+            }
+        } catch (err) {
+            console.warn('MTR Journey Planner travel time unavailable; using fallback estimate.', err);
+        }
+        return fallback;
+    }
 
     // 南 -> 北的相對次序；RAC 與 FOT 均位於沙田與大學之間的不同支線。
     const MTR_UNIVERSITY_ROUTE_RANK = {
@@ -391,9 +424,11 @@ function setSettingsCacheView(showCache) {
         return false;
     }
 
-    function estimateMtrUniversityArrival(trainTime, origin, direction, destination) {
+    function estimateMtrUniversityArrival(trainTime, origin, direction, destination, travelMinutesOverride = null) {
         const stationCode = normalizeMtrStationCode(origin);
-        const travelMinutes = MTR_UNIVERSITY_TRAVEL_MINUTES[stationCode];
+        const travelMinutes = Number.isFinite(travelMinutesOverride)
+            ? travelMinutesOverride
+            : MTR_UNIVERSITY_TRAVEL_MINUTES[stationCode];
         if (!Number.isFinite(travelMinutes) || !mtrTrainWillPassUniversity(stationCode, direction, destination)) return null;
         const departureMs = new Date(trainTime).getTime();
         if (!Number.isFinite(departureMs)) return null;
@@ -420,7 +455,9 @@ function setSettingsCacheView(showCache) {
     window.apiJsonInflight = new Map();
 
     function isHongKongTransportApi(url) {
-        return /^https:\/\/(data\.etagmb\.gov\.hk|data\.etabus\.gov\.hk|rt\.data\.gov\.hk)\//i.test(String(url || ''));
+        const u = String(url || '');
+        return /^https:\/\/(data\.etagmb\.gov\.hk|data\.etabus\.gov\.hk|rt\.data\.gov\.hk)\//i.test(u) ||
+               /^https:\/\/www\.mtr\.com\.hk\/share\/customer\/jp\/api\/HRRoutes\//i.test(u);
     }
 
     function getJsonFetchUrls(url) {
@@ -670,6 +707,11 @@ function setSettingsCacheView(showCache) {
         if (config) document.getElementById('dest-label').innerText = config.label;
         smoothRefresh('mtr-list-2', fetchMTR_Return);
     }
+    function switchKmb900Stop(stopId) {
+        if (!stopId || selectedKmb900StopId === stopId) return;
+        selectedKmb900StopId = stopId;
+        smoothRefresh('kmb-list-900', fetchKMB_900);
+    }
     function smoothRefresh(elementId, fetchFunc) {
         const el = document.getElementById(elementId);
         if (!el) return;
@@ -716,34 +758,147 @@ function setSettingsCacheView(showCache) {
         } catch (e) { listEl.innerHTML = '<div class="status-msg error">更新失敗</div>'; }
     }
 
+    function renderKmbHomeEtaRows(element, etas) {
+        const liveEtas = Array.from(etas || []).filter(e => e && e.eta != null)
+            .sort((a, b) => new Date(a.eta).getTime() - new Date(b.eta).getTime());
+        if (liveEtas.length === 0) {
+            element.innerHTML = '<div class="status-msg">暫無班次</div>';
+            return;
+        }
+
+        // v6.9.6: shared three-column contract for 272A/900:
+        // ETA | clock | scheduled/last-service. Fixed columns keep labels vertically aligned.
+        element.innerHTML = liveEtas.slice(0, 3).map(bus => {
+            const mins = getMins(bus.eta);
+            const isUrgent = mins === '即將' || mins === '0分' || mins === '1分' || mins === '2分' || mins === '3分';
+            const scheduled = isScheduledRemarkPair(bus.rmk_tc || '', bus.rmk_en || '');
+            const lastService = isLastServiceRemarkPair(bus.rmk_tc || '', bus.rmk_en || '');
+            const rawRemark = getInlineRemarkText(bus.rmk_tc || '', bus.rmk_en || '');
+            const extraRemark = rawRemark && !scheduled && !lastService ? `<span class="service-remark">${escapeHtml(rawRemark)}</span>` : '';
+            const departure = formatTime(bus.eta);
+            const statusLabel = scheduled ? '預定班次' : (lastService ? '最後班次' : '');
+            return `
+            <div class="schedule-item kmb-home-item">
+                <div class="kmb-home-line" aria-label="${mins}，${departure}${statusLabel ? `，${statusLabel}` : ''}">
+                    <span class="kmb-home-eta">${renderCardMinutesLabel(mins, { isUrgent, isScheduled: scheduled })}</span>
+                    <span class="kmb-home-clock">${departure}</span>
+                    <span class="kmb-home-remark">${statusLabel}</span>
+                </div>
+                ${extraRemark}
+            </div>`;
+        }).join('');
+    }
+
     async function renderKMB(element, stopId, displayLabel) {
         if (!stopId) { element.innerHTML = '<div class="status-msg">找不到車站</div>'; return; }
         const data = await fetchJsonCached(`https://data.etabus.gov.hk/v1/transport/kmb/eta/${stopId}/272A/1`, { ttl: 12000, timeout: 5000 });
-        const etas = data.data.filter(e => e.eta != null);
+        renderKmbHomeEtaRows(element, (data && data.data) || []);
+    }
 
-        if (etas.length === 0) {
-            element.innerHTML = '<div class="status-msg">暫無班次</div>';
-        } else {
-            // v6.9.5: both 白石角出發 and 我要回家 use the same compact KMB ETA row.
-            element.innerHTML = etas.slice(0, 3).map(bus => {
-                const mins = getMins(bus.eta);
-                const isUrgent = mins === '即將' || mins === '0分' || mins === '1分' || mins === '2分' || mins === '3分';
-                const scheduled = isScheduledRemarkPair(bus.rmk_tc || '', bus.rmk_en || '');
-                const lastService = isLastServiceRemarkPair(bus.rmk_tc || '', bus.rmk_en || '');
-                const rawRemark = getInlineRemarkText(bus.rmk_tc || '', bus.rmk_en || '');
-                const extraRemark = rawRemark && !scheduled && !lastService ? `<span class="service-remark">${escapeHtml(rawRemark)}</span>` : '';
-                const departure = formatTime(bus.eta);
-                const statusLabel = scheduled ? '預定班次' : (lastService ? '最後班次' : '');
-                return `
-                <div class="schedule-item kmb-home-item">
-                    <div class="kmb-home-line" aria-label="${mins}，${departure}${statusLabel ? `，${statusLabel}` : ''}">
-                        <span class="kmb-home-eta">${renderCardMinutesLabel(mins, { isUrgent, isScheduled: scheduled })}</span>
-                        <span class="kmb-home-clock">${departure}</span>
-                        <span class="kmb-home-remark">${statusLabel}</span>
-                    </div>
-                    ${extraRemark}
-                </div>`;
-            }).join('');
+    function cleanKmb900StopDisplayName(name) {
+        // Keep the selector compact: KMB stop names may append bay/English notes in () / （）.
+        // The actual stop ID and full API name are left untouched; only the visible label is simplified.
+        const cleaned = String(name || '')
+            .replace(/\s*[（(][^）)]*[）)]/g, '')
+            .replace(/\s{2,}/g, ' ')
+            .trim();
+        return cleaned || String(name || '').trim();
+    }
+
+    async function loadKmb900Stops() {
+        if (kmb900Stops.length) return kmb900Stops;
+        if (kmb900StopsPromise) return kmb900StopsPromise;
+
+        kmb900StopsPromise = (async () => {
+            const variants = await Promise.allSettled(['1', '2'].map(async serviceType => {
+                const data = await fetchJsonCached(`https://data.etabus.gov.hk/v1/transport/kmb/route-stop/900/inbound/${serviceType}`, { ttl: 3600000, timeout: 6000 });
+                return { serviceType, rows: (data && data.data) || [] };
+            }));
+
+            const byStop = new Map();
+            variants.forEach((result, variantIndex) => {
+                if (result.status !== 'fulfilled') return;
+                const { serviceType, rows } = result.value;
+                rows.forEach((row, rowIndex) => {
+                    if (!row || !row.stop) return;
+                    let entry = byStop.get(row.stop);
+                    if (!entry) {
+                        entry = {
+                            stopId: row.stop,
+                            serviceTypes: [],
+                            sortKey: variantIndex * 1000 + (Number(row.seq) || rowIndex + 1)
+                        };
+                        byStop.set(row.stop, entry);
+                    }
+                    if (!entry.serviceTypes.includes(serviceType)) entry.serviceTypes.push(serviceType);
+                });
+            });
+
+            const stopRefs = [...byStop.values()].sort((a, b) => a.sortKey - b.sortKey);
+            const resolved = await mapWithConcurrency(stopRefs, 6, async ref => {
+                try {
+                    const detail = await fetchJsonCached(`https://data.etabus.gov.hk/v1/transport/kmb/stop/${ref.stopId}`, { ttl: 86400000, timeout: 5000 });
+                    const d = detail && detail.data ? detail.data : {};
+                    return { ...ref, nameTc: d.name_tc || ref.stopId, nameEn: d.name_en || '' };
+                } catch (_) {
+                    return { ...ref, nameTc: ref.stopId, nameEn: '' };
+                }
+            });
+
+            kmb900Stops = resolved;
+            const select = document.getElementById('kmb900-stop-select');
+            if (select && kmb900Stops.length) {
+                const currentStillValid = selectedKmb900StopId && kmb900Stops.some(s => s.stopId === selectedKmb900StopId);
+                if (!currentStillValid) {
+                    const preferred = kmb900Stops.find(s => String(s.nameTc || '').includes('太古廣場'));
+                    selectedKmb900StopId = (preferred || kmb900Stops[0]).stopId;
+                }
+                select.innerHTML = kmb900Stops.map(stop => {
+                    const displayName = cleanKmb900StopDisplayName(stop.nameTc);
+                    return `<option value="${escapeHtml(stop.stopId)}"${stop.stopId === selectedKmb900StopId ? ' selected' : ''}>${escapeHtml(displayName)}</option>`;
+                }).join('');
+            }
+            return kmb900Stops;
+        })().finally(() => {
+            kmb900StopsPromise = null;
+        });
+
+        return kmb900StopsPromise;
+    }
+
+    async function fetchKMB_900() {
+        if (currentTab !== 2) return;
+        const listEl = document.getElementById('kmb-list-900');
+        if (!listEl) return;
+
+        try {
+            await loadKmb900Stops();
+            const selected = kmb900Stops.find(s => s.stopId === selectedKmb900StopId);
+            if (!selected) {
+                listEl.innerHTML = '<div class="status-msg">找不到車站</div>';
+                return;
+            }
+
+            const etaResults = await Promise.allSettled((selected.serviceTypes.length ? selected.serviceTypes : ['1']).map(async serviceType => {
+                const data = await fetchJsonCached(`https://data.etabus.gov.hk/v1/transport/kmb/eta/${selected.stopId}/900/${serviceType}`, { ttl: 12000, timeout: 5000 });
+                return ((data && data.data) || []).filter(e => e && e.eta != null && (!e.dir || String(e.dir).toUpperCase() === 'I'));
+            }));
+
+            const merged = [];
+            const seen = new Set();
+            etaResults.forEach(result => {
+                if (result.status !== 'fulfilled') return;
+                result.value.forEach(eta => {
+                    const key = `${eta.eta || ''}|${eta.service_type || ''}|${eta.seq || ''}|${eta.dest_tc || ''}`;
+                    if (seen.has(key)) return;
+                    seen.add(key);
+                    merged.push(eta);
+                });
+            });
+            renderKmbHomeEtaRows(listEl, merged);
+        } catch (e) {
+            console.warn('KMB 900 ETA unavailable', e);
+            listEl.innerHTML = '<div class="status-msg error">更新失敗</div>';
         }
     }
 
@@ -870,18 +1025,22 @@ function setSettingsCacheView(showCache) {
             return;
         }
 
+        // v6.9.7: use the same primary three-column ETA layout as the rest of the home cards:
+        // minutes | clock | service status. This removes the old parenthesised-time sub-layout.
         element.innerHTML = etas.slice(0, 3).map(bus => {
             const mins = Number.isFinite(Number(bus.diff)) ? (Number(bus.diff) <= 0 ? '即將' : `${bus.diff}分`) : getMins(bus.timestamp);
             const isUrgent = mins === '即將' || mins === '0分' || mins === '1分' || mins === '2分' || mins === '3分';
             const scheduled = isScheduledRemarkPair(bus.remarks_tc || '', bus.remarks_en || '');
             const rawRemark = getInlineRemarkText(bus.remarks_tc || '', bus.remarks_en || '');
             const extraRemark = rawRemark && !scheduled ? `<span class="service-remark">${escapeHtml(rawRemark)}</span>` : '';
+            const departure = formatTime(bus.timestamp);
+            const statusLabel = scheduled ? '預定班次' : '';
             return `
-                <div class="schedule-item">
-                    <div class="schedule-line">
-                        ${renderCardMinutesLabel(mins, { isUrgent, isScheduled: scheduled })}
-                        <span class="eta-clock">(${formatTime(bus.timestamp)})</span>
-                        ${scheduled ? '<span class="eta-scheduled-inline">原定班次</span>' : ''}
+                <div class="schedule-item gmb-home-item">
+                    <div class="gmb-home-line" aria-label="${mins}，${departure}${statusLabel ? `，${statusLabel}` : ''}">
+                        <span class="gmb-home-eta">${renderCardMinutesLabel(mins, { isUrgent, isScheduled: scheduled })}</span>
+                        <span class="gmb-home-clock">${departure}</span>
+                        <span class="gmb-home-remark">${statusLabel}</span>
                     </div>
                     ${extraRemark}
                 </div>`;
@@ -909,6 +1068,12 @@ function setSettingsCacheView(showCache) {
                 element.innerHTML = '<div class="status-msg">暫無班次</div>'; return;
             }
             
+            // 「我要回家」的到大學車程以 MTR 官方 Journey Planner 為準。
+            // 只需每次 render 取一次；之後同一批 upcoming trains 共用相同官方車程。
+            const universityTravelMinutes = apiStation !== 'UNI'
+                ? await getMtrOfficialUniversityTravelMinutes(apiStation)
+                : null;
+
             let universityDurationShown = false;
             element.innerHTML = schedule.map(t => {
                 const normalizedDest = normalizeMtrStationCode(t.dest);
@@ -916,7 +1081,7 @@ function setSettingsCacheView(showCache) {
                 const mins = getMins(t.time);
                 const isUrgent = mins === '即將' || mins === '0分' || mins === '1分' || mins === '2分' || mins === '3分';
                 const universityArrival = apiStation !== 'UNI'
-                    ? estimateMtrUniversityArrival(t.time, apiStation, direction, normalizedDest)
+                    ? estimateMtrUniversityArrival(t.time, apiStation, direction, normalizedDest, universityTravelMinutes)
                     : null;
                 const isHomeMtr = apiStation !== 'UNI';
                 if (isHomeMtr) {
@@ -994,7 +1159,7 @@ function setSettingsCacheView(showCache) {
         if (tabId === 1) {
             jobs = [fetchKMB_PokYin(), fetchGMB('28A'), fetchGMB('28S'), fetchMTR_Uni()];
         } else if (tabId === 2) {
-            jobs = [fetchMTR_Return(), fetchKMB_Uni()];
+            jobs = [fetchMTR_Return(), fetchKMB_Uni(), fetchKMB_900()];
         } else if (tabId === 3) {
             jobs = [refreshFavoritesEta(), refreshFavoritesFare()];
         } else if (tabId === 4) {
@@ -4872,7 +5037,7 @@ function setSettingsCacheView(showCache) {
 
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
         window.addEventListener('load', () => {
-            navigator.serviceWorker.register('./sw.js?v=6.9.5', { updateViaCache: 'none' }).catch(err => {
+            navigator.serviceWorker.register('./sw.js?v=6.9.7', { updateViaCache: 'none' }).catch(err => {
                 console.warn('Service worker registration failed:', err);
             });
         });
