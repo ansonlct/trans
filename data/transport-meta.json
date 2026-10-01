@@ -1,6 +1,6 @@
 {
-  "updatedAt": "2026-09-30T00:42:17.243Z",
-  "serviceDay": "2026-09-30",
+  "updatedAt": "2026-10-01T00:45:17.923Z",
+  "serviceDay": "2026-10-01",
   "serviceDayCutoffHKT": "06:00",
   "operatorStatus": {
     "kmb": {
@@ -30,12 +30,12 @@
   },
   "loadedCounts": {
     "kmb": {
-      "routeNumbers": 794,
-      "stations": 6745
+      "routeNumbers": 796,
+      "stations": 6750
     },
     "citybus": {
       "routeNumbers": 407,
-      "stations": 2269
+      "stations": 2275
     },
     "nlb": {
       "routeNumbers": 38,
@@ -43,13 +43,13 @@
     },
     "gmb": {
       "routeNumbers": 576,
-      "stations": 4288
+      "stations": 4296
     }
   },
   "datasets": {
     "kmb-route.json": {
-      "records": 1600,
-      "routeNumbers": 794,
+      "records": 1604,
+      "routeNumbers": 796,
       "stations": 0,
       "source": "https://data.etabus.gov.hk/v1/transport/kmb/route/",
       "required": true,
@@ -58,9 +58,9 @@
       "stale": false
     },
     "kmb-stop.json": {
-      "records": 6745,
+      "records": 6750,
       "routeNumbers": 0,
-      "stations": 6745,
+      "stations": 6750,
       "source": "https://data.etabus.gov.hk/v1/transport/kmb/stop",
       "required": true,
       "available": true,
@@ -118,8 +118,8 @@
       "stale": false
     },
     "stop-search-index.json": {
-      "records": 7781,
-      "stations": 7781,
+      "records": 7793,
+      "stations": 7793,
       "source": "https://static.data.gov.hk/td/pt-headway-tc/gtfs.zip",
       "required": false,
       "available": true,
@@ -127,8 +127,8 @@
       "stale": false
     },
     "route-fares.json": {
-      "records": 64290,
-      "routeNumbers": 2317,
+      "records": 64661,
+      "routeNumbers": 2335,
       "source": "https://static.data.gov.hk/td/pt-headway-tc/gtfs.zip",
       "required": false,
       "available": true,
@@ -136,8 +136,8 @@
       "stale": false
     },
     "route-timetables.json": {
-      "records": 68961,
-      "routeNumbers": 2317,
+      "records": 69239,
+      "routeNumbers": 2335,
       "source": "https://static.data.gov.hk/td/pt-headway-tc/gtfs.zip",
       "required": false,
       "available": true,
