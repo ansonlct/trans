@@ -1,6 +1,6 @@
 {
-  "updatedAt": "2026-10-14T00:31:07.216Z",
-  "serviceDay": "2026-10-14",
+  "updatedAt": "2026-10-15T00:02:03.914Z",
+  "serviceDay": "2026-10-15",
   "serviceDayCutoffHKT": "06:00",
   "operatorStatus": {
     "kmb": {
@@ -30,16 +30,16 @@
   },
   "loadedCounts": {
     "kmb": {
-      "routeNumbers": 802,
+      "routeNumbers": 801,
       "stations": 6774
     },
     "citybus": {
       "routeNumbers": 409,
-      "stations": 2275
+      "stations": 2284
     },
     "nlb": {
       "routeNumbers": 39,
-      "stations": 195
+      "stations": 228
     },
     "gmb": {
       "routeNumbers": 576,
@@ -48,8 +48,8 @@
   },
   "datasets": {
     "kmb-route.json": {
-      "records": 1613,
-      "routeNumbers": 802,
+      "records": 1611,
+      "routeNumbers": 801,
       "stations": 0,
       "source": "https://data.etabus.gov.hk/v1/transport/kmb/route/",
       "required": true,
@@ -118,8 +118,8 @@
       "stale": false
     },
     "stop-search-index.json": {
-      "records": 7793,
-      "stations": 7793,
+      "records": 7803,
+      "stations": 7803,
       "source": "https://static.data.gov.hk/td/pt-headway-tc/gtfs.zip",
       "required": false,
       "available": true,
@@ -127,8 +127,8 @@
       "stale": false
     },
     "route-fares.json": {
-      "records": 64661,
-      "routeNumbers": 2335,
+      "records": 64602,
+      "routeNumbers": 2333,
       "source": "https://static.data.gov.hk/td/pt-headway-tc/gtfs.zip",
       "required": false,
       "available": true,
@@ -136,8 +136,8 @@
       "stale": false
     },
     "route-timetables.json": {
-      "records": 69239,
-      "routeNumbers": 2335,
+      "records": 69618,
+      "routeNumbers": 2333,
       "source": "https://static.data.gov.hk/td/pt-headway-tc/gtfs.zip",
       "required": false,
       "available": true,
