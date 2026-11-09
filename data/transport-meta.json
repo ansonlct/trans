@@ -1,6 +1,6 @@
 {
-  "updatedAt": "2026-11-08T00:52:24.291Z",
-  "serviceDay": "2026-11-08",
+  "updatedAt": "2026-11-09T01:08:38.237Z",
+  "serviceDay": "2026-11-09",
   "serviceDayCutoffHKT": "06:00",
   "operatorStatus": {
     "kmb": {
@@ -48,7 +48,7 @@
   },
   "datasets": {
     "kmb-route.json": {
-      "records": 1605,
+      "records": 1606,
       "routeNumbers": 798,
       "stations": 0,
       "source": "https://data.etabus.gov.hk/v1/transport/kmb/route/",
