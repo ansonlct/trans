@@ -1,8 +1,8 @@
 {
-  "updatedAt": "2026-11-17T04:06:41.983Z",
+  "updatedAt": "2026-11-18T03:04:16.884Z",
   "records": {
-    "kmb-route.json": 1573,
-    "kmb-stop.json": 6751
+    "kmb-route.json": 1570,
+    "kmb-stop.json": 6745
   },
   "routeStopStrategy": "lazy-per-route"
 }
